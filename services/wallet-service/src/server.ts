@@ -23,7 +23,7 @@ import {
 import { SubmissionError, type TransactionSubmitter } from "./relayer";
 import { assertScopedToKnownWallets, ScopeError } from "./scope";
 import { assertDerivedContractId, DerivationMismatchError } from "./derivation";
-import type { CacheOperation } from "./cache-metrics";
+import { initCacheMetrics, type CacheOperation } from "./cache-metrics";
 import { NoOpCache } from "./cache";
 
 // Wallet API (idea.md §11). No POST /wallet/sign: signing is client-side via
@@ -134,6 +134,7 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
   const app = Fastify({ logger: true });
   registerHealth(app, "wallet-service", { isReady: deps.isReady });
   registerMetrics(app, "wallet-service");
+  initCacheMetrics();
   registerCorrelationId(app);
 
   async function openSession(contractId: string, network: "testnet" | "mainnet") {

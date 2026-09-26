@@ -40,6 +40,23 @@ afterEach(async () => {
   app = undefined;
 });
 
+async function createAndConnect(server: FastifyInstance) {
+  const create = await server.inject({
+    method: "POST",
+    url: "/wallet/create",
+    payload: createBody,
+  });
+  const connect = await server.inject({
+    method: "POST",
+    url: "/wallet/connect",
+    payload: { keyId: createBody.keyId, network: "testnet" },
+  });
+  return {
+    createSessionId: create.json().sessionId as string,
+    connectSessionId: connect.json().sessionId as string,
+  };
+}
+
 describe("POST /wallet/create", () => {
   it("submits deployment, persists the mapping, opens a session, and audits", async () => {
     const audit = createMemoryAuditLog();

@@ -80,6 +80,18 @@ export function validateResourceLabel(resource: string): CacheResourceType | "un
   return "unknown";
 }
 
+/**
+ * Materialise a zero-valued series for every allowed resource so /metrics
+ * exposes the cache counters from startup (and after a registry reset) rather
+ * than only after the first cache read. Hit-ratio rules need both series present.
+ */
+export function initCacheMetrics(): void {
+  for (const resource of ALLOWED_RESOURCES) {
+    cacheHits.inc({ resource }, 0);
+    cacheMisses.inc({ resource }, 0);
+  }
+}
+
 // --- Cache wrapper with metrics ------------------------------------------------
 
 /**

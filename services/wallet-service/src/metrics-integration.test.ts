@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
+import { StrKey } from "@stellar/stellar-sdk";
 import { __resetMetricsForTest } from "@vellar/service-kit";
 import { MemoryCacheStore } from "./cache";
 import { createCacheMetricsWrapper } from "./cache-metrics";
 import { buildServer } from "./server";
 import { createUnconfiguredSubmitter } from "./relayer";
+import { MemoryCacheStore } from "./cache";
+import { createCacheMetricsWrapper } from "./cache-metrics";
 import { createMemoryWalletRepository, createMemorySessionRepository } from "./repository";
 
 describe("Cache Metrics Integration (/metrics endpoint)", () => {
@@ -99,12 +102,19 @@ describe("Cache Metrics Integration (/metrics endpoint)", () => {
   });
 
   it("does not expose PII or sensitive labels in metrics", async () => {
+    const contractId = StrKey.encodeContract(Buffer.alloc(32, 7));
+    const cache = createCacheMetricsWrapper(new MemoryCacheStore());
+    await cache.get("account", contractId);
+    await cache.set("account", contractId, { balance: "1" });
+    await cache.get("account", contractId);
+
     const response = await app.inject({
       method: "GET",
       url: "/metrics",
     });
 
     const metrics = response.body;
+    expect(metrics).toContain('wallet_service_cache_hits_total{resource="account"} 1');
     // Should NOT contain wallet addresses, user IDs, or request IDs
     expect(metrics).not.toMatch(/\b[CG][A-Z2-7]{55}\b/);
     expect(metrics).not.toContain("keyId");
