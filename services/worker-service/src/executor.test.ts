@@ -1,3 +1,5 @@
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   BuildExecutorError,
@@ -5,6 +7,7 @@ import {
   stubBuildExecutor,
   type DockerBuildExecutorConfig,
 } from "./executor";
+import { DependencyPrefetchError } from "./cargo-prefetch";
 import { assertPublicHttpsRepoUrl, RepoUrlError } from "./repo-url-guard";
 
 const repoInput = {
@@ -20,6 +23,10 @@ const repoInput = {
 // fixed public pin, as the real guard would.
 const passRepoUrl = async () => ({ host: "github.com", port: 443, ip: "140.82.112.3" });
 
+// No-op dependency pre-fetch for tests that only inspect command wiring; the
+// real pre-fetch has its own tests (cargo-prefetch.test.ts).
+const noPrefetch = async () => ({ plan: { registry: [], git: [] }, log: "" });
+
 // A fake `run` seam that scripts responses per command and records the docker
 // args, so we can assert isolation flags + timeout wiring without real Docker.
 function fakeRun(opts: {
@@ -30,12 +37,15 @@ function fakeRun(opts: {
   wasmList?: string;
 }) {
   const calls: { cmd: string; args: string[]; timeoutMs?: number }[] = [];
-  const run: NonNullable<DockerBuildExecutorConfig["run"]> = async (cmd, args, _cwd, timeoutMs) => {
+  const run: NonNullable<DockerBuildExecutorConfig["run"]> = async (cmd, args, cwd, timeoutMs) => {
     calls.push({ cmd, args, timeoutMs });
     // clone args now carry `-c protocol...` flags before the subcommand, so
     // match by presence, not position.
-    if (cmd === "git" && args.includes("clone"))
+    if (cmd === "git" && args.includes("clone")) {
+      // Like a real clone, a successful one leaves the checkout directory.
+      if ((opts.cloneCode ?? 0) === 0) await mkdir(join(cwd, "repo"), { recursive: true });
       return { code: opts.cloneCode ?? 0, out: "cloned" };
+    }
     if (cmd === "git" && args.includes("checkout"))
       return { code: opts.checkoutCode ?? 0, out: "checked out" };
     if (cmd === "docker")
@@ -53,7 +63,12 @@ describe("dockerBuildExecutor isolation", () => {
     });
     // readFile will fail (no real file) — we only care about the docker args,
     // so let the build reach artifact reading and throw artifact_missing.
-    const ex = dockerBuildExecutor({ image: "vela-verify:test", run, assertRepoUrl: passRepoUrl });
+    const ex = dockerBuildExecutor({
+      prefetch: noPrefetch,
+      image: "vela-verify:test",
+      run,
+      assertRepoUrl: passRepoUrl,
+    });
     await expect(ex.build(repoInput)).rejects.toBeInstanceOf(BuildExecutorError);
 
     const dockerCall = calls.find((c) => c.cmd === "docker");
@@ -74,6 +89,7 @@ describe("dockerBuildExecutor isolation", () => {
   it("passes the configured timeout (ms) to the build run", async () => {
     const { run, calls } = fakeRun({ wasmList: "target/wasm32v1-none/release/x.wasm" });
     const ex = dockerBuildExecutor({
+      prefetch: noPrefetch,
       image: "img",
       run,
       timeoutSeconds: 42,
@@ -87,6 +103,7 @@ describe("dockerBuildExecutor isolation", () => {
   it("honors custom resource caps", async () => {
     const { run, calls } = fakeRun({ wasmList: "target/wasm32v1-none/release/x.wasm" });
     const ex = dockerBuildExecutor({
+      prefetch: noPrefetch,
       image: "img",
       run,
       memory: "4g",
@@ -104,6 +121,7 @@ describe("dockerBuildExecutor isolation", () => {
   it("fails with build_failed when the build times out", async () => {
     const { run } = fakeRun({ buildTimedOut: true, buildCode: 124 });
     const ex = dockerBuildExecutor({
+      prefetch: noPrefetch,
       image: "img",
       run,
       timeoutSeconds: 1,
@@ -118,13 +136,19 @@ describe("dockerBuildExecutor isolation", () => {
 
   it("fails with clone_failed when git clone fails", async () => {
     const { run } = fakeRun({ cloneCode: 1 });
-    const ex = dockerBuildExecutor({ image: "img", run, assertRepoUrl: passRepoUrl });
+    const ex = dockerBuildExecutor({
+      prefetch: noPrefetch,
+      image: "img",
+      run,
+      assertRepoUrl: passRepoUrl,
+    });
     await expect(ex.build(repoInput)).rejects.toMatchObject({ code: "clone_failed" });
   });
 
   it("rejects a repoUrl the SSRF guard blocks BEFORE cloning (FIX 6)", async () => {
     const { run, calls } = fakeRun({});
     const ex = dockerBuildExecutor({
+      prefetch: noPrefetch,
       image: "img",
       run,
       assertRepoUrl: async () => {
@@ -138,7 +162,12 @@ describe("dockerBuildExecutor isolation", () => {
 
   it("pins the connection to the guard IP, forbids redirects, and `--`-separates the url", async () => {
     const { run, calls } = fakeRun({ wasmList: "target/wasm32v1-none/release/x.wasm" });
-    const ex = dockerBuildExecutor({ image: "img", run, assertRepoUrl: passRepoUrl });
+    const ex = dockerBuildExecutor({
+      prefetch: noPrefetch,
+      image: "img",
+      run,
+      assertRepoUrl: passRepoUrl,
+    });
     await ex.build(repoInput).catch(() => {}); // reaches artifact read + throws; we only inspect args
     const cloneCall = calls.find(
       (c) => c.cmd === "git" && c.args[c.args.indexOf("clone") ?? -1] === "clone",
@@ -167,7 +196,12 @@ describe("dockerBuildExecutor isolation", () => {
     const guard = (repoUrl: string) =>
       assertPublicHttpsRepoUrl(repoUrl, { resolve: flippingResolve });
     const { run, calls } = fakeRun({ wasmList: "target/wasm32v1-none/release/x.wasm" });
-    const ex = dockerBuildExecutor({ image: "img", run, assertRepoUrl: guard });
+    const ex = dockerBuildExecutor({
+      prefetch: noPrefetch,
+      image: "img",
+      run,
+      assertRepoUrl: guard,
+    });
     await ex.build(repoInput).catch(() => {});
     const cloneCall = calls.find(
       (c) => c.cmd === "git" && c.args[c.args.indexOf("clone") ?? -1] === "clone",
@@ -193,7 +227,12 @@ describe("dockerBuildExecutor isolation", () => {
     const guard = (repoUrl: string) =>
       assertPublicHttpsRepoUrl(repoUrl, { resolve: capturingResolve });
     const { run, calls } = fakeRun({ wasmList: "target/wasm32v1-none/release/x.wasm" });
-    const ex = dockerBuildExecutor({ image: "img", run, assertRepoUrl: guard });
+    const ex = dockerBuildExecutor({
+      prefetch: noPrefetch,
+      image: "img",
+      run,
+      assertRepoUrl: guard,
+    });
     await ex.build(repoInput).catch(() => {});
 
     const cloneCall = calls.find(
@@ -208,7 +247,12 @@ describe("dockerBuildExecutor isolation", () => {
     const guard = (repoUrl: string) =>
       assertPublicHttpsRepoUrl(repoUrl, { resolve: async () => ["203.0.113.9"] });
     const { run, calls } = fakeRun({ wasmList: "target/wasm32v1-none/release/x.wasm" });
-    const ex = dockerBuildExecutor({ image: "img", run, assertRepoUrl: guard });
+    const ex = dockerBuildExecutor({
+      prefetch: noPrefetch,
+      image: "img",
+      run,
+      assertRepoUrl: guard,
+    });
     await ex
       .build({ ...repoInput, repoUrl: "https://git.example.com:8443/repo.git" })
       .catch(() => {});
@@ -222,17 +266,117 @@ describe("dockerBuildExecutor isolation", () => {
     const guard = (repoUrl: string) =>
       assertPublicHttpsRepoUrl(repoUrl, { resolve: async () => ["169.254.169.254"] });
     const { run, calls } = fakeRun({});
-    const ex = dockerBuildExecutor({ image: "img", run, assertRepoUrl: guard });
+    const ex = dockerBuildExecutor({
+      prefetch: noPrefetch,
+      image: "img",
+      run,
+      assertRepoUrl: guard,
+    });
     await expect(ex.build(repoInput)).rejects.toMatchObject({ code: "repo_url_rejected" });
     expect(calls.find((c) => c.cmd === "git")).toBeUndefined();
   });
 
   it("rejects non-repo submissions (upload) with unsupported_source", async () => {
     const { run } = fakeRun({});
-    const ex = dockerBuildExecutor({ image: "img", run, assertRepoUrl: passRepoUrl });
+    const ex = dockerBuildExecutor({
+      prefetch: noPrefetch,
+      image: "img",
+      run,
+      assertRepoUrl: passRepoUrl,
+    });
     await expect(
       ex.build({ sourceType: "upload", sourceArchiveRef: "a", toolchainVersion: "1.94.0" }),
     ).rejects.toMatchObject({ code: "unsupported_source" });
+  });
+});
+
+describe("hermetic build (#420)", () => {
+  it("builds offline against the pre-fetched deps, read-only, from Cargo.lock", async () => {
+    const { run, calls } = fakeRun({ wasmList: "target/wasm32v1-none/release/x.wasm" });
+    const ex = dockerBuildExecutor({
+      prefetch: noPrefetch,
+      image: "img",
+      run,
+      assertRepoUrl: passRepoUrl,
+    });
+    await ex.build(repoInput).catch(() => {});
+    const a = calls.find((c) => c.cmd === "docker")!.args;
+    expect(a).toContain("--network=none");
+    expect(a.some((x) => /:\/deps:ro$/.test(x))).toBe(true);
+    expect(a).toContain("CARGO_HOME=/cargo-home");
+    expect(a).toContain("GIT_CONFIG_GLOBAL=/deps/gitconfig");
+    expect(a).toContain("GIT_CONFIG_NOSYSTEM=1");
+    expect(a.slice(a.indexOf("img"))).toEqual(["img", "stellar", "contract", "build", "--locked"]);
+  });
+
+  it("pre-fetches into a directory outside the repo checkout", async () => {
+    const { run } = fakeRun({ wasmList: "target/wasm32v1-none/release/x.wasm" });
+    const seen: { repoDir: string; depsDir: string }[] = [];
+    const ex = dockerBuildExecutor({
+      image: "img",
+      run,
+      assertRepoUrl: passRepoUrl,
+      prefetch: async (repoDir, depsDir) => {
+        seen.push({ repoDir, depsDir });
+        return noPrefetch();
+      },
+    });
+    await ex.build(repoInput).catch(() => {});
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.depsDir.startsWith(seen[0]!.repoDir)).toBe(false);
+  });
+
+  it.each(["dependencies_unresolved", "dependency_fetch_failed", "repo_url_rejected"] as const)(
+    "a %s pre-fetch failure fails the build and never starts a container (no fallback)",
+    async (code) => {
+      const { run, calls } = fakeRun({});
+      const ex = dockerBuildExecutor({
+        image: "img",
+        run,
+        assertRepoUrl: passRepoUrl,
+        prefetch: async () => {
+          throw new DependencyPrefetchError("nope", code);
+        },
+      });
+      await expect(ex.build(repoInput)).rejects.toMatchObject({
+        name: "BuildExecutorError",
+        code,
+      });
+      expect(calls.filter((c) => c.cmd === "docker")).toHaveLength(0);
+    },
+  );
+
+  it("a failed offline build is not retried in any form", async () => {
+    const { run, calls } = fakeRun({ buildCode: 101 });
+    const ex = dockerBuildExecutor({
+      prefetch: noPrefetch,
+      image: "img",
+      run,
+      assertRepoUrl: passRepoUrl,
+    });
+    await expect(ex.build(repoInput)).rejects.toMatchObject({ code: "build_failed" });
+    const dockerCalls = calls.filter((c) => c.cmd === "docker");
+    expect(dockerCalls).toHaveLength(1);
+    expect(dockerCalls[0]!.args).toContain("--network=none");
+  });
+
+  it("removes the named container when the build times out", async () => {
+    const { run, calls } = fakeRun({ buildTimedOut: true, buildCode: 124 });
+    const ex = dockerBuildExecutor({
+      prefetch: noPrefetch,
+      image: "img",
+      run,
+      assertRepoUrl: passRepoUrl,
+    });
+    await expect(ex.build(repoInput)).rejects.toMatchObject({ code: "build_failed" });
+    const runArgs = calls.find((c) => c.cmd === "docker" && c.args[0] === "run")!.args;
+    const name = runArgs[runArgs.indexOf("--name") + 1];
+    expect(name).toMatch(/^vellar-build-/);
+    expect(calls.find((c) => c.cmd === "docker" && c.args[0] === "rm")?.args).toEqual([
+      "rm",
+      "-f",
+      name,
+    ]);
   });
 });
 

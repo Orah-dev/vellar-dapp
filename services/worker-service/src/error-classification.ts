@@ -181,6 +181,19 @@ export function isTransientFailure(error: unknown): boolean {
     if (code === "unsupported_source") {
       return false;
     }
+
+    // dependencies_unresolved: Cargo.lock missing/invalid, an unsupported
+    // source, or a crate/commit that does not exist (permanent input error).
+    if (code === "dependencies_unresolved") {
+      return false;
+    }
+
+    // dependency_fetch_failed: crates.io or a git host was unreachable during
+    // the pre-fetch. Retryable — a retry repeats the guarded pre-fetch and the
+    // same offline build; it is never a networked build.
+    if (code === "dependency_fetch_failed") {
+      return true;
+    }
   }
 
   // Unknown error type: default to transient (conservative — retry rather than
