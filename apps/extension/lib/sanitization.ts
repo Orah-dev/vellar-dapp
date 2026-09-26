@@ -28,7 +28,11 @@ export function sanitizeUrl(url: string | undefined): string {
   if (!url || typeof url !== "string") return "";
   const trimmed = url.trim();
   const lower = trimmed.toLowerCase();
-  if (lower.startsWith("javascript:") || lower.startsWith("data:") || lower.startsWith("vbscript:")) {
+  if (
+    lower.startsWith("javascript:") ||
+    lower.startsWith("data:") ||
+    lower.startsWith("vbscript:")
+  ) {
     return "";
   }
   return escapeHtml(trimmed);
@@ -38,10 +42,7 @@ export function sanitizeUrl(url: string | undefined): string {
  * Sanitize a plain text string field (name, title, description, etc.).
  * Strips HTML tags, control characters, and enforces length limits.
  */
-export function sanitizeString(
-  input: unknown,
-  maxLength: number = MAX_DESCRIPTION_LENGTH,
-): string {
+export function sanitizeString(input: unknown, maxLength: number = MAX_DESCRIPTION_LENGTH): string {
   if (input === null || input === undefined) return "";
   const str = String(input);
   // Remove control characters (except space, tab, newline)

@@ -33,7 +33,10 @@ const FLAG_ENV_PREFIX = "NEXT_PUBLIC_FLAG_";
  * `name` is upper-snake-cased internally, so callers can pass either form
  * ("policyBuilderV2" or "POLICY_BUILDER_V2") and get the same env var names.
  */
-export function readFlagConfig(name: string, env: Record<string, string | undefined> = process.env): FeatureFlagConfig {
+export function readFlagConfig(
+  name: string,
+  env: Record<string, string | undefined> = process.env,
+): FeatureFlagConfig {
   const key = toEnvKey(name);
   const rolloutRaw = env[`${FLAG_ENV_PREFIX}${key}_ROLLOUT_PERCENT`];
   const allowlistRaw = env[`${FLAG_ENV_PREFIX}${key}_ALLOWLIST`];
@@ -56,9 +59,7 @@ export function readFlagConfig(name: string, env: Record<string, string | undefi
 }
 
 function toEnvKey(name: string): string {
-  return name
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .toUpperCase();
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase();
 }
 
 /**

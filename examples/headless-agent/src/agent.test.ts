@@ -1,9 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { StrKey, xdr, Address, Keypair } from "@stellar/stellar-sdk";
-import {
-  generateNonExtractableAgentKey,
-  createWebCryptoSessionKeySigner,
-} from "./signer.js";
+import { generateNonExtractableAgentKey, createWebCryptoSessionKeySigner } from "./signer.js";
 import { HeadlessAgent } from "./agent.js";
 
 describe("Headless Agent Runtime Example (#397)", () => {
@@ -28,13 +25,13 @@ describe("Headless Agent Runtime Example (#397)", () => {
     it("strictly prevents exporting or printing private key bytes (§17.4)", async () => {
       const agentKey = await generateNonExtractableAgentKey();
 
-      await expect(
-        crypto.subtle.exportKey("pkcs8", agentKey.keyPair.privateKey),
-      ).rejects.toThrow(/not extractable/i);
+      await expect(crypto.subtle.exportKey("pkcs8", agentKey.keyPair.privateKey)).rejects.toThrow(
+        /not extractable/i,
+      );
 
-      await expect(
-        crypto.subtle.exportKey("jwk", agentKey.keyPair.privateKey),
-      ).rejects.toThrow(/not extractable/i);
+      await expect(crypto.subtle.exportKey("jwk", agentKey.keyPair.privateKey)).rejects.toThrow(
+        /not extractable/i,
+      );
     });
 
     it("signs V1 sorobanCredentialsAddress auth entries without extracting secret key", async () => {

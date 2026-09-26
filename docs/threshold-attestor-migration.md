@@ -7,6 +7,7 @@ This document defines the architecture, operational procedure, and verification 
 ## 1. Problem Addressed & Why It Blocked Mainnet
 
 In the initial testnet deployment:
+
 - The attestation registry contract was deployed at `CBZVS2ETJKCIMRRWUHTZFVMWDACJNYUZ54JIXUJCHXNBFNXELKTSWHGP` (per `docs/decisions.md` 2026-08-01).
 - The attestor address was configured as a single Ed25519 G-key (`GB4G5MGE…`).
 - **The Risk (M5):** A single host compromise or secret key leak would allow an attacker to:
@@ -49,6 +50,7 @@ The solution follows the design specified in `docs/security-audit.md` (FIX 4):
 ```
 
 ### Key Contract Guarantees
+
 1. **No Auth Model Changes to Registry:** `attestation-registry` calls `load_attestor(&env).require_auth()`. By setting `attestor` to a contract address (C-address), Soroban automatically routes authorization through `__check_auth`.
 2. **M-of-N Threshold Enforced On-Chain:** `__check_auth` evaluates signatures using host cryptographic primitives (`env.crypto().ed25519_verify`).
 3. **Fast-Path Revocation:** The contract supports an optional `revoke_threshold` (e.g. 1-of-N or 2-of-N) while keeping `threshold` (e.g. 3-of-5 or 2-of-3) for `upsert` and signer rotation. This ensures broken or upgraded contracts can be revoked immediately without consensus bottlenecks.
@@ -100,6 +102,7 @@ stellar contract invoke \
 
 **Verification:**
 Query the registry's attestor:
+
 ```bash
 stellar contract invoke \
   --id CBZVS2ETJKCIMRRWUHTZFVMWDACJNYUZ54JIXUJCHXNBFNXELKTSWHGP \
@@ -108,6 +111,7 @@ stellar contract invoke \
   -- attestor
 # Expected output: $THRESHOLD_ATTESTOR_ID
 ```
+
 At this point, single key `GB4G5MGE…` has lost all administrative and writing authority over the registry.
 
 ### Step 3: Configure Worker Service
@@ -155,6 +159,7 @@ The worker service initializes `ThresholdKeyManager` and `createThresholdSubmitt
 ## 4. Mainnet Hard-Gate Status
 
 `assertAttestorSafeForNetwork` in `services/worker-service/src/attestor-guard.ts` now enforces:
+
 - `mainnet` + `NODE_ENV === "production"`: Throws `SingleKeyAttestorOnMainnetError` unconditionally. The escape hatch `ALLOW_SINGLE_KEY_ATTESTOR` cannot bypass this in production.
 - `mainnet` + non-production: Requires explicit `ALLOW_SINGLE_KEY_ATTESTOR=1` for dry-run testing.
 - `testnet`: Permitted for backward-compatible staging before switching to threshold mode.

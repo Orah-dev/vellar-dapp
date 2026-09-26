@@ -96,9 +96,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
         grantedAt: "2026-01-01T00:00:00.000Z",
       };
 
-      expect(
-        hasCapability([grant], "https://app.example.com", "testnet", "sign")
-      ).toBe(true);
+      expect(hasCapability([grant], "https://app.example.com", "testnet", "sign")).toBe(true);
     });
 
     it("matches when grant origin and incoming origin are identical (http)", () => {
@@ -110,9 +108,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
         grantedAt: "2026-01-01T00:00:00.000Z",
       };
 
-      expect(
-        hasCapability([grant], "http://localhost:3000", "testnet", "sign")
-      ).toBe(true);
+      expect(hasCapability([grant], "http://localhost:3000", "testnet", "sign")).toBe(true);
     });
 
     it("matches when grant origin and incoming origin are identical (https with explicit non-default port)", () => {
@@ -124,9 +120,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
         grantedAt: "2026-01-01T00:00:00.000Z",
       };
 
-      expect(
-        hasCapability([grant], "https://app.example.com:8443", "testnet", "sign")
-      ).toBe(true);
+      expect(hasCapability([grant], "https://app.example.com:8443", "testnet", "sign")).toBe(true);
     });
   });
 
@@ -153,9 +147,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
       };
 
       // Subdomain MUST NOT inherit permission from parent domain
-      expect(
-        hasCapability([grant], "https://sub.example.com", "testnet", "sign")
-      ).toBe(false);
+      expect(hasCapability([grant], "https://sub.example.com", "testnet", "sign")).toBe(false);
     });
 
     it("denies when grant is for subdomain but request is from parent domain", () => {
@@ -168,9 +160,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
       };
 
       // Parent domain MUST NOT inherit permission from subdomain
-      expect(
-        hasCapability([grant], "https://example.com", "testnet", "sign")
-      ).toBe(false);
+      expect(hasCapability([grant], "https://example.com", "testnet", "sign")).toBe(false);
     });
 
     it("denies when grant is for one subdomain but request is from a different subdomain", () => {
@@ -183,9 +173,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
       };
 
       // Different subdomains are distinct origins; one must not inherit from the other
-      expect(
-        hasCapability([grant], "https://app2.example.com", "testnet", "sign")
-      ).toBe(false);
+      expect(hasCapability([grant], "https://app2.example.com", "testnet", "sign")).toBe(false);
     });
 
     it("denies when grant is for multiple-level subdomain but request is from parent", () => {
@@ -198,9 +186,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
       };
 
       // Multi-level subdomains are distinct from all parent levels
-      expect(
-        hasCapability([grant], "https://v1.example.com", "testnet", "sign")
-      ).toBe(false);
+      expect(hasCapability([grant], "https://v1.example.com", "testnet", "sign")).toBe(false);
     });
   });
 
@@ -227,9 +213,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
       };
 
       // http MUST NOT inherit permission from https
-      expect(
-        hasCapability([grant], "http://example.com", "testnet", "sign")
-      ).toBe(false);
+      expect(hasCapability([grant], "http://example.com", "testnet", "sign")).toBe(false);
     });
 
     it("denies when grant is http but request is https (same host)", () => {
@@ -242,9 +226,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
       };
 
       // https MUST NOT inherit permission from http (even localhost)
-      expect(
-        hasCapability([grant], "https://localhost:3000", "testnet", "sign")
-      ).toBe(false);
+      expect(hasCapability([grant], "https://localhost:3000", "testnet", "sign")).toBe(false);
     });
   });
 
@@ -272,9 +254,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
       };
 
       // Different explicit ports are distinct origins
-      expect(
-        hasCapability([grant], "https://example.com:9443", "testnet", "sign")
-      ).toBe(false);
+      expect(hasCapability([grant], "https://example.com:9443", "testnet", "sign")).toBe(false);
     });
 
     it("denies when grant has implicit port (no port in origin string) but request has explicit port", () => {
@@ -287,9 +267,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
       };
 
       // Implicit (default) port vs explicit port are distinct strings
-      expect(
-        hasCapability([grant], "https://example.com:443", "testnet", "sign")
-      ).toBe(false);
+      expect(hasCapability([grant], "https://example.com:443", "testnet", "sign")).toBe(false);
     });
 
     it("denies when grant has explicit port but request has implicit port", () => {
@@ -302,9 +280,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
       };
 
       // Explicit port vs implicit (default) port are distinct strings
-      expect(
-        hasCapability([grant], "https://example.com", "testnet", "sign")
-      ).toBe(false);
+      expect(hasCapability([grant], "https://example.com", "testnet", "sign")).toBe(false);
     });
   });
 
@@ -335,9 +311,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
       };
 
       // Empty origin must not match
-      expect(
-        hasCapability([grant], "", "testnet", "sign")
-      ).toBe(false);
+      expect(hasCapability([grant], "", "testnet", "sign")).toBe(false);
     });
 
     it("denies when incoming origin lacks scheme", () => {
@@ -350,9 +324,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
       };
 
       // Scheme-less origin is malformed and must not match
-      expect(
-        hasCapability([grant], "example.com", "testnet", "sign")
-      ).toBe(false);
+      expect(hasCapability([grant], "example.com", "testnet", "sign")).toBe(false);
     });
 
     it("denies when incoming origin has path component", () => {
@@ -365,9 +337,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
       };
 
       // Origin with path is malformed (normalizeOrigin rejects these)
-      expect(
-        hasCapability([grant], "https://example.com/app", "testnet", "sign")
-      ).toBe(false);
+      expect(hasCapability([grant], "https://example.com/app", "testnet", "sign")).toBe(false);
     });
 
     it("denies when incoming origin has query component", () => {
@@ -380,9 +350,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
       };
 
       // Origin with query is malformed (normalizeOrigin rejects these)
-      expect(
-        hasCapability([grant], "https://example.com?x=1", "testnet", "sign")
-      ).toBe(false);
+      expect(hasCapability([grant], "https://example.com?x=1", "testnet", "sign")).toBe(false);
     });
 
     it("denies when incoming origin has unusual/invalid characters", () => {
@@ -395,9 +363,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
       };
 
       // Unusual characters in origin are malformed
-      expect(
-        hasCapability([grant], "https://exam ple.com", "testnet", "sign")
-      ).toBe(false);
+      expect(hasCapability([grant], "https://exam ple.com", "testnet", "sign")).toBe(false);
     });
 
     it("denies when incoming origin is a non-http scheme (fail-closed for unknown schemes)", () => {
@@ -410,9 +376,7 @@ describe("hasCapability — Origin Matcher Security Tests (Issue #322)", () => {
       };
 
       // chrome-extension:// is rejected by normalizeOrigin, so it will never match
-      expect(
-        hasCapability([grant], "chrome-extension://abcdef", "testnet", "sign")
-      ).toBe(false);
+      expect(hasCapability([grant], "chrome-extension://abcdef", "testnet", "sign")).toBe(false);
     });
   });
 

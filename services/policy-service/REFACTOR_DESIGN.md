@@ -11,6 +11,7 @@ The `server.ts` controller currently handles both policy validation (input corre
 All functions/blocks in `buildServer()` classified as follows:
 
 ### VALIDATION LOGIC (belongs in `validation.ts`)
+
 These functions validate policy definitions, check request inputs, and verify state consistency. They contain no deployment orchestration, RPC calls, or instance provisioning.
 
 1. **`validateDefinition(definition: unknown): ValidationResult`**
@@ -45,6 +46,7 @@ These functions validate policy definitions, check request inputs, and verify st
 ---
 
 ### DEPLOYMENT ORCHESTRATION (belongs in `deployment.ts`)
+
 These functions drive the actual deployment process: instance provisioning, budget consumption, attach verification, and state transitions.
 
 1. **`POST /policies/:id/deploy-instance` core logic**
@@ -75,6 +77,7 @@ These functions drive the actual deployment process: instance provisioning, budg
 ---
 
 ### SHARED/COORDINATION LOGIC (belongs in controller or shared utilities)
+
 These functions coordinate between validation and deployment or handle concerns that don't cleanly belong to either.
 
 1. **`POST /policies/templates` endpoint**
@@ -152,33 +155,40 @@ These functions coordinate between validation and deployment or handle concerns 
 ### New Modules
 
 #### **`validation.ts`**
+
 Exports:
+
 - `validatePolicyDefinition(definition: unknown): ValidationResult` — re-export of templates.validateDefinition
 - `validatePolicyForDeployment(record: PolicyRecord): { valid: boolean; error?: string }` — new function to check if policy can be deployed (has enforcement.kind === "policy-contract" && constructorArgs)
 - `validatePolicyInstance(record: PolicyRecord): { valid: boolean; error?: string }` — new function to check if instance exists and is valid
 
 Handles:
+
 - Input schema validation (Zod schemas)
 - Policy definition validation
 - Record state validation (idempotency checks, enforcement availability)
 
 **Does NOT handle**:
+
 - Deployment orchestration
 - Repository updates
 - RPC calls
 
 #### **`deployment.ts`**
+
 Exports:
+
 - `deployPolicyInstance(deps: DeploymentDeps, record: PolicyRecord, wallet: string): Promise<{ record: PolicyRecord; contractId: string }>`
   - Consumes budget, calls deployer.deployInstance, updates record, returns updated record
-  
+
 - `verifyAndRecordAttach(deps: DeploymentDeps, record: PolicyRecord, txHash: string, contractId?: string): Promise<PolicyRecord>`
   - Verifies attach tx, updates record with deployment state, returns updated record
-  
+
 - `simulatePolicyDeploy(deps: DeploymentDeps, record: PolicyRecord, wallet: string): Promise<SimulateResult>`
   - Dry-run simulation, no state change, returns result
 
 Handles:
+
 - Sponsor budget consumption
 - Instance provisioning
 - L1 attach verification
@@ -187,11 +197,14 @@ Handles:
 - Metrics recording
 
 **Does NOT handle**:
+
 - Input validation (that's validation module's job)
 - Policy definition validation
 
 #### **`server.ts` (refactored)**
+
 Remains the thin coordinator/HTTP handler:
+
 - Registers routes
 - Parses Zod schemas
 - Calls validation and deployment modules
@@ -228,11 +241,13 @@ templates.ts, deploy.ts, verify-attach.ts
 ### Controller Interface Preservation
 
 **HTTP API: unchanged**
+
 - All endpoints return same status codes, response shapes, and error messages
 - All request body schemas remain the same
 - All side effects (repository updates, budget consumption, metrics) happen in the same order
 
 **Test Harness: unchanged**
+
 - `buildServer()` signature and behavior: identical
 - `createMemoryPolicyRepository()`: unchanged
 - `PolicyRepository` interface: unchanged
@@ -240,6 +255,7 @@ templates.ts, deploy.ts, verify-attach.ts
 - No test modifications to assertion logic or expected values
 
 **Dependencies injection: unchanged**
+
 - `PolicyServiceDeps` interface: unchanged
 - All deps flow the same way (injected at buildServer, used internally)
 - Backward compatibility: yes, modules are internal; only buildServer is public
@@ -298,6 +314,7 @@ This is a pure refactor. No bugs will be fixed, no features added.
 ## 6. Testing Strategy
 
 ### Existing tests: run unchanged
+
 - All tests in `server.test.ts` call through the public Fastify API (`app.inject()`)
 - No tests call internal functions that will move
 - No modifications to test assertions or expected values
@@ -305,12 +322,14 @@ This is a pure refactor. No bugs will be fixed, no features added.
 ### New module tests
 
 #### **`validation.test.ts`** (isolated validation tests)
+
 - Test `validatePolicyForDeployment()` directly: true for contract-enforced policies, false for others
 - Test `validatePolicyInstance()` directly: true if instance exists, false otherwise
 - Test Zod schema validation (wallet address format, policyId required, etc.)
 - No deployment setup needed
 
 #### **`deployment.test.ts`** (isolated deployment tests, mocked external calls)
+
 - Test `deployPolicyInstance()` with mocked deployer: verify budget consume is called, instance record is updated, status → "instance_deployed"
 - Test budget failure path: budget.tryConsume returns ok:false → 503 returned by coordinator
 - Test deployer error path: throws PolicyDeployError → caught and 502 returned
@@ -318,11 +337,13 @@ This is a pure refactor. No bugs will be fixed, no features added.
 - Test `simulatePolicyDeploy()` with mocked deployer: returns simulation result, no state change
 
 #### **`server.test.ts` (existing tests, should pass unchanged)**
+
 - All 30+ existing tests run as-is
 - Verify they still call the same endpoints with same payloads and get same responses
 - No test modifications
 
 #### **Coordinator integration test** (verify wiring is correct)
+
 - One new test in server.test.ts (or separate integration.test.ts)
 - Call `/deploy-instance`, verify deployment module state transition happened + record persisted
 - Call `/deploy`, verify attach verification and deployment record state transition happened
@@ -332,21 +353,21 @@ This is a pure refactor. No bugs will be fixed, no features added.
 
 ## 7. Summary Table
 
-| Concern | Current | New Home | Reason |
-|---------|---------|----------|--------|
-| validateDefinition | templates.ts (imported) | validation.ts (re-export) | Validation module centralizes all validation logic |
-| POST /validate | server.ts | controller in server.ts | Thin coordinator remains |
-| POST /generate | server.ts | coordinator (validation module does work) | Coordination of validation + repo insert |
-| POST /templates | server.ts | controller in server.ts | Metadata query, belongs in coordinator |
-| GET /id | server.ts | controller in server.ts | Query, belongs in coordinator |
-| POST /deploy-instance | server.ts | coordinator (deployment module does work) | Coordination of deploy + state update |
-| POST /deploy | server.ts | coordinator (deployment module does work) | Coordination of verify + state update |
-| POST /simulate | server.ts | coordinator (deployment module does work) | Coordination of simulate request |
-| Budget check | server.ts | deployment.ts | Deployment orchestration |
-| Deployer call | server.ts | deployment.ts | Deployment orchestration |
-| Verification call | server.ts | deployment.ts | Deployment orchestration |
-| Record updates | server.ts | deployment.ts | State transition is orchestration concern |
-| Error handling | server.ts | controller + modules | Some errors caught by modules, 503/502/422 mapping in controller |
+| Concern               | Current                 | New Home                                  | Reason                                                           |
+| --------------------- | ----------------------- | ----------------------------------------- | ---------------------------------------------------------------- |
+| validateDefinition    | templates.ts (imported) | validation.ts (re-export)                 | Validation module centralizes all validation logic               |
+| POST /validate        | server.ts               | controller in server.ts                   | Thin coordinator remains                                         |
+| POST /generate        | server.ts               | coordinator (validation module does work) | Coordination of validation + repo insert                         |
+| POST /templates       | server.ts               | controller in server.ts                   | Metadata query, belongs in coordinator                           |
+| GET /id               | server.ts               | controller in server.ts                   | Query, belongs in coordinator                                    |
+| POST /deploy-instance | server.ts               | coordinator (deployment module does work) | Coordination of deploy + state update                            |
+| POST /deploy          | server.ts               | coordinator (deployment module does work) | Coordination of verify + state update                            |
+| POST /simulate        | server.ts               | coordinator (deployment module does work) | Coordination of simulate request                                 |
+| Budget check          | server.ts               | deployment.ts                             | Deployment orchestration                                         |
+| Deployer call         | server.ts               | deployment.ts                             | Deployment orchestration                                         |
+| Verification call     | server.ts               | deployment.ts                             | Deployment orchestration                                         |
+| Record updates        | server.ts               | deployment.ts                             | State transition is orchestration concern                        |
+| Error handling        | server.ts               | controller + modules                      | Some errors caught by modules, 503/502/422 mapping in controller |
 
 ---
 
@@ -357,4 +378,3 @@ This is a pure refactor. No bugs will be fixed, no features added.
 3. **Controller is thin**: Routes → parse → call validation or deployment → map result to HTTP response. No business logic.
 4. **No shared mutable state**: Modules return results; results are passed to other modules or mapped to HTTP responses. Reduces coupling and makes testing easier.
 5. **Backward compatible**: buildServer() signature unchanged, HTTP API unchanged, all existing tests pass, no breaking changes.
-

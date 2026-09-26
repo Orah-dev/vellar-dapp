@@ -197,11 +197,7 @@ describe("routeProviderRequest", () => {
   });
 
   it("get_network responds directly with network info", () => {
-    const decision = routeProviderRequest(
-      { method: "get_network", params: {} },
-      ORIGIN,
-      granted,
-    );
+    const decision = routeProviderRequest({ method: "get_network", params: {} }, ORIGIN, granted);
     expect(decision).toEqual({
       kind: "respond",
       payload: {

@@ -56,8 +56,8 @@ Copy this list into the migration PR description and check off each item.
       AFTER the migration, before the column/constraint that depends on it
       goes live.
 - [ ] For a table above a few hundred thousand rows: the migration was
-      reviewed for lock duration — an `ALTER TABLE ... ADD COLUMN ... NOT
-      NULL` without a default, or an index build without `CONCURRENTLY`,
+      reviewed for lock duration — an
+      `ALTER TABLE ... ADD COLUMN ... NOT NULL` without a default, or an index build without `CONCURRENTLY`,
       holds a table-level lock for the full duration and can stall the
       service. Prefer `CREATE INDEX CONCURRENTLY` (note: this cannot run
       inside a transaction — confirm Drizzle's migrator here doesn't wrap it
@@ -92,8 +92,8 @@ Copy this list into the migration PR description and check off each item.
 - [ ] The new file follows the existing numbering (`000N_description.sql`)
       and was added to `drizzle/meta/_journal.json` by the generator, not by
       hand.
-- [ ] Ran the migration against a local Postgres (`docker compose -f
-      infra/docker/docker-compose.yml up -d`, matching how CI/dev boot the
+- [ ] Ran the migration against a local Postgres (
+      `docker compose -f infra/docker/docker-compose.yml up -d`, matching how CI/dev boot the
       service) and confirmed `pnpm --filter @vellar/policy-service dev` boots
       cleanly and applies it — this is the same boot-time path production
       uses, so a local dry run is a meaningfully accurate rehearsal.

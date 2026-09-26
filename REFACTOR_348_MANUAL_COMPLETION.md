@@ -11,6 +11,7 @@
 All code changes have been implemented and verified. These files are ready to be staged and committed:
 
 ### New Files:
+
 1. **apps/extension/lib/origin-validation-integration.test.ts**
    - Comprehensive integration test verifying both import paths produce identical validation results
    - 14 test vectors covering valid origins, trailing-dot normalization, invalid cases, and dangerous schemes
@@ -21,6 +22,7 @@ All code changes have been implemented and verified. These files are ready to be
    - Design decisions and acceptance criteria
 
 ### Modified Files:
+
 1. **services/permission-service/src/index.ts**
    - Added re-export of `normalizeOrigin`, `hasCapability`, `PermissionGrant` from provider-sdk
    - Makes permission-service the single import boundary for origin/permission operations
@@ -42,17 +44,20 @@ All code changes have been implemented and verified. These files are ready to be
 ## Manual Completion Steps
 
 ### Step 1: Stage Changes
+
 ```bash
 cd c:\Users\Nuelthewave\Desktop\VELLAR\vellar-dapp
 git add .
 ```
 
 ### Step 2: Create Commit
+
 ```bash
 git commit -m "refactor(#348): consolidate origin-validation via permission-service facade"
 ```
 
 ### Step 3: Verify Commit
+
 ```bash
 git log --oneline -1
 ```
@@ -60,25 +65,30 @@ git log --oneline -1
 Expected output: Your commit message with a short hash.
 
 ### Step 4: Run Extension Tests
+
 ```bash
 pnpm test --filter=@vellar/extension -- --run
 ```
 
 **Expected behavior:**
+
 - Tests should pass including the new integration test
 - Integration test should verify both import paths produce identical results
 - No TypeScript errors
 
 ### Step 5: Run Permission-Service Tests
+
 ```bash
 pnpm test --filter=@vellar/permission-service -- --run
 ```
 
 **Expected behavior:**
+
 - Existing permission-service tests should pass
 - No changes to behavior (we only re-exported, didn't change implementation)
 
 ### Step 6: Run Full Test Suite (Optional)
+
 ```bash
 pnpm test
 ```
@@ -88,12 +98,14 @@ pnpm test
 ## What Was Verified ✅
 
 ### Code Quality
+
 - [x] All imports in extension reference permission-service (not provider-sdk) for origin utilities
 - [x] No leftover imports from provider-sdk for `normalizeOrigin` or `hasCapability`
 - [x] Integration test covers all edge cases from original provider-sdk tests
 - [x] Permission-service re-export is properly documented with inline comments
 
 ### Functional Equivalence
+
 - [x] Both import paths (via permission-service facade and direct from provider-sdk) resolve to identical underlying implementation
 - [x] All validation edge cases handled identically:
   - Valid origins with https, http, custom ports
@@ -102,6 +114,7 @@ pnpm test
   - Dotted/dotless origin equivalence
 
 ### Files and Dependencies
+
 - [x] All 4 files modified correctly and verified
 - [x] Extension package.json includes permission-service dependency
 - [x] Integration test file created with comprehensive test vectors
@@ -111,6 +124,7 @@ pnpm test
 ## Expected Test Output
 
 ### Extension Tests
+
 ```
 ✓ apps/extension/lib/origin-validation-integration.test.ts
   ✓ Origin Validation Facade Integration (refactor #348)
@@ -142,6 +156,7 @@ pnpm test
 **Refactor #348 is implementation-complete and ready for final commit and testing.**
 
 All code changes have been made and verified:
+
 - ✅ Permission-service re-exports origin-validation utilities
 - ✅ Extension imports updated to use permission-service
 - ✅ Package dependency added
@@ -158,16 +173,19 @@ All code changes have been made and verified:
 If tests fail after commit:
 
 1. **Type errors:** Ensure TypeScript version is consistent across workspace
+
    ```bash
    pnpm install
    ```
 
 2. **Missing dependency:** Verify permission-service is in the workspace
+
    ```bash
    pnpm list @vellar/permission-service
    ```
 
 3. **Import resolution:** Check that permission-service/src/index.ts correctly exports the utilities
+
    ```bash
    grep -n "export.*normalizeOrigin" services/permission-service/src/index.ts
    ```
@@ -182,6 +200,7 @@ If tests fail after commit:
 ## Questions?
 
 Refer to **REFACTOR_348_IMPLEMENTATION.md** for complete documentation of:
+
 - Design rationale and why Option 3 was chosen
 - Detailed breakdown of each change
 - Acceptance criteria and verification steps
