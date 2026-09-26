@@ -91,7 +91,11 @@ describe("createCachedAccountReader", () => {
       const underlying: AccountReader = {
         getAccount: async (id) => {
           if (id === "GSOURCE") return sourceExists ? account({ accountId: "GSOURCE" }) : undefined;
-          if (id === "GDEST") return account({ accountId: "GDEST", balances: [{ assetType: "native", balance: destBalance }] });
+          if (id === "GDEST")
+            return account({
+              accountId: "GDEST",
+              balances: [{ assetType: "native", balance: destBalance }],
+            });
           return undefined;
         },
       };

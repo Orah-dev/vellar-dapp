@@ -56,7 +56,15 @@ export function createMemoryJobStore(): MemoryJobStore {
       return claimed;
     },
 
-    async reapStranded({ timeoutMs, maxAttempts, baseBackoffDelayMs = 1_000, maxBackoffDelayMs = 30_000, nowMs, onReclaimed, onDeadLettered }) {
+    async reapStranded({
+      timeoutMs,
+      maxAttempts,
+      baseBackoffDelayMs = 1_000,
+      maxBackoffDelayMs = 30_000,
+      nowMs,
+      onReclaimed,
+      onDeadLettered,
+    }) {
       const now = nowMs ?? Date.now();
       let reclaimed = 0;
       let deadLettered = 0;
@@ -75,7 +83,11 @@ export function createMemoryJobStore(): MemoryJobStore {
           row.startedBuildingAtMs = undefined;
           // Calculate exponential backoff delay for next reclaim
           const attempt = (row.attempts ?? 0) - 1; // attempts already incremented at claim
-          const backoffDelay = calculateBackoffDelay(attempt, baseBackoffDelayMs, maxBackoffDelayMs);
+          const backoffDelay = calculateBackoffDelay(
+            attempt,
+            baseBackoffDelayMs,
+            maxBackoffDelayMs,
+          );
           // In memory store, we'd apply this delay on next claim by checking timestamp
           // For test purposes, we just record the backoff happened
           reclaimed++;

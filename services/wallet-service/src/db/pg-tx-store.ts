@@ -124,11 +124,7 @@ export async function markInFlight(
  * after long delays, we still deduplicate it. Currently assumed to be 24 hours
  * (verify in queue configuration). 48 hours provides 2x margin.
  */
-export async function markProcessed(
-  db: Db,
-  transactionId: string,
-  hash: string,
-): Promise<void> {
+export async function markProcessed(db: Db, transactionId: string, hash: string): Promise<void> {
   const now = new Date();
   const processedExpiry = new Date(now.getTime() + 48 * 60 * 60 * 1000); // 48 hours
 
@@ -179,11 +175,7 @@ export async function markFailed(
  * Called when attempts ≥ MAX_ATTEMPTS and the last error was transient
  * (would have been retried otherwise).
  */
-export async function markDeadLetter(
-  db: Db,
-  transactionId: string,
-  reason: string,
-): Promise<void> {
+export async function markDeadLetter(db: Db, transactionId: string, reason: string): Promise<void> {
   const now = new Date();
 
   await db
@@ -299,9 +291,7 @@ export async function getSubmissionRecord(
 /**
  * Get the count of transactions in each status (for metrics/monitoring).
  */
-export async function getStatusCounts(
-  db: Db,
-): Promise<Record<string, number>> {
+export async function getStatusCounts(db: Db): Promise<Record<string, number>> {
   const rows = await db
     .select({
       status: transactionSubmissions.status,

@@ -86,7 +86,8 @@ describe("MemoryCacheStore", () => {
     const cache2 = new MemoryCacheStore(200); // Longer TTL
     await cache2.set("balance", "key1", "value1");
 
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    // Past cache2's 200ms TTL so key1 has expired.
+    await new Promise((resolve) => setTimeout(resolve, 250));
 
     const cache1 = new MemoryCacheStore(100);
     await cache1.set("nonce", "key2", "value2");

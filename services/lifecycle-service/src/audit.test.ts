@@ -19,8 +19,8 @@ describe("audit.ts", () => {
       const events = await audit.list();
 
       expect(events).toHaveLength(2);
-      expect(events[0].type).toBe("test.event1");
-      expect(events[1].type).toBe("test.event2");
+      expect(events[0]!.type).toBe("test.event1");
+      expect(events[1]!.type).toBe("test.event2");
     });
 
     it("automatically redacts events before storage", async () => {
@@ -40,7 +40,7 @@ describe("audit.ts", () => {
       });
 
       const events = await audit.list();
-      const event = events[0];
+      const event = events[0]!;
 
       // Stored event should be redacted
       const plan = (event.data as Record<string, unknown>).plan as Record<string, unknown>;
@@ -61,7 +61,7 @@ describe("audit.ts", () => {
       const afterTime = new Date().toISOString();
 
       const events = await audit.list();
-      const event = events[0];
+      const event = events[0]!;
 
       expect(event.at).toBeDefined();
       expect(event.at >= beforeTime).toBe(true);
@@ -177,8 +177,14 @@ describe("audit.ts", () => {
       });
 
       const events = await audit.list();
-      const event1Plan = (events[0].data as Record<string, unknown>).plan as Record<string, unknown>;
-      const event2Plan = (events[1].data as Record<string, unknown>).plan as Record<string, unknown>;
+      const event1Plan = (events[0]!.data as Record<string, unknown>).plan as Record<
+        string,
+        unknown
+      >;
+      const event2Plan = (events[1]!.data as Record<string, unknown>).plan as Record<
+        string,
+        unknown
+      >;
 
       // Same account → same hash
       expect(event1Plan.accountRef).toBe(event2Plan.accountRef);
@@ -215,7 +221,7 @@ describe("audit.ts", () => {
 
       const events = await audit.list();
       expect(events).toHaveLength(1);
-      expect(events[0].data).toBeDefined();
+      expect(events[0]!.data).toBeDefined();
     });
 
     it("handles rapid sequential records", async () => {

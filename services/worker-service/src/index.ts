@@ -43,7 +43,7 @@ if (!config.databaseUrl) {
   // than idle-poll forever against nothing.
   safeLog(
     "error",
-    "[worker-service] DATABASE_URL is not set — the build worker needs the shared verification store. Exiting."
+    "[worker-service] DATABASE_URL is not set — the build worker needs the shared verification store. Exiting.",
   );
   process.exit(1);
 }
@@ -51,7 +51,10 @@ if (!config.databaseUrl) {
 const pool = new pg.Pool({ connectionString: config.databaseUrl });
 const db = drizzle(pool);
 const store = createPgJobStore(db);
-const resolver = createRpcArtifactResolver({ rpcUrl: config.rpcUrl, timeoutMs: config.rpcTimeoutMs });
+const resolver = createRpcArtifactResolver({
+  rpcUrl: config.rpcUrl,
+  timeoutMs: config.rpcTimeoutMs,
+});
 const { executor, mode } = executorFromConfig(config);
 
 const log = createSafeLogger();
@@ -187,8 +190,6 @@ const runReaper = async () => {
     const res = await store.reapStranded({
       timeoutMs: config.reapTimeoutMs,
       maxAttempts: config.maxBuildAttempts,
-      baseBackoffDelayMs: config.backoffBaseDelayMs,
-      maxBackoffDelayMs: config.maxBackoffDelayMs,
       // Track retry attempts for metrics
       onReclaimed: (attempt: number) => {
         domainMetrics.verificationRetry.inc({
@@ -210,7 +211,10 @@ const runReaper = async () => {
     log.error("reaper sweep failed", err);
   } finally {
     if (!reaperStopped) {
-      reapTimer = setTimeout(runReaper, jitteredDelayMs(config.reapIntervalMs, config.reapJitterMs));
+      reapTimer = setTimeout(
+        runReaper,
+        jitteredDelayMs(config.reapIntervalMs, config.reapJitterMs),
+      );
     }
   }
 };

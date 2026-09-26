@@ -55,6 +55,22 @@ export interface WorkerRuntimeConfig {
   workerConcurrency: number;
   /** Backpressure concurrency limit for concurrent transaction processing (default 2). */
   concurrencyLimit: number;
+  // ── ETL cleanup (issue #345) ─────────────────────────────────────────────
+  /** A terminal row (verified/failed/dead_letter) must be at least this many
+   * days old (measured from updated_at) before it is eligible for cleanup.
+   * Default 90 days. Env: CLEANUP_RETENTION_DAYS. */
+  cleanupRetentionDays: number;
+  /** Maximum rows processed per cleanup run. Keeps individual transactions
+   * small and the job safe to interrupt+resume. Default 500.
+   * Env: CLEANUP_BATCH_SIZE. */
+  cleanupBatchSize: number;
+  /** How often the cleanup job runs (ms). Default 86 400 000 = 24 h.
+   * Env: CLEANUP_INTERVAL_MS. */
+  cleanupIntervalMs: number;
+  /** When true (default) eligible rows are copied to verification_records_archive
+   * before being deleted (archive-then-delete). Set to false to hard-delete
+   * with no archival. Env: CLEANUP_ARCHIVE_ENABLED (0 disables). */
+  cleanupArchiveEnabled: boolean;
 }
 
 const TESTNET_RPC = "https://soroban-testnet.stellar.org";
@@ -102,8 +118,12 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerRunti
     concurrencyLimit: env.WORKER_CONCURRENCY
       ? Number(env.WORKER_CONCURRENCY)
       : env.VERIFY_CONCURRENCY_LIMIT
-      ? Number(env.VERIFY_CONCURRENCY_LIMIT)
-      : 2,
+        ? Number(env.VERIFY_CONCURRENCY_LIMIT)
+        : 2,
+    cleanupRetentionDays: env.CLEANUP_RETENTION_DAYS ? Number(env.CLEANUP_RETENTION_DAYS) : 90,
+    cleanupBatchSize: env.CLEANUP_BATCH_SIZE ? Number(env.CLEANUP_BATCH_SIZE) : 500,
+    cleanupIntervalMs: env.CLEANUP_INTERVAL_MS ? Number(env.CLEANUP_INTERVAL_MS) : 86_400_000,
+    cleanupArchiveEnabled: env.CLEANUP_ARCHIVE_ENABLED !== "0",
   };
 }
 

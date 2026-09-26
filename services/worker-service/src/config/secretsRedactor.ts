@@ -49,7 +49,7 @@ export function redact(obj: unknown): unknown {
         Object.entries(obj as Record<string, unknown>).map(([key, value]) => {
           // Check if this key represents a secret variable
           const isSecretKey = SECRET_ENV_VARS.some((secretVar) =>
-            key.toLowerCase().includes(secretVar.toLowerCase())
+            key.toLowerCase().includes(secretVar.toLowerCase()),
           );
 
           if (isSecretKey) {
@@ -58,7 +58,7 @@ export function redact(obj: unknown): unknown {
 
           // Recursively redact nested values
           return [key, redact(value)];
-        })
+        }),
       );
     }
 
@@ -97,8 +97,12 @@ export function redactString(input: unknown): string {
   // Generic connection strings with credentials: protocol://user:password@host
   result = result.replace(/([a-z]+:\/\/)[^:\/]+:[^@]+@/gi, "$1[REDACTED]@");
 
-  // Ed25519 private keys (start with SA for Stellar)
-  result = result.replace(/SA[A-Z2-7]{55}/gi, "[REDACTED]");
+  // Stellar secret seeds: "S" + 55 base32 chars (56 total; the second char
+  // varies, so not just "SA...").
+  result = result.replace(/\bS[A-Z2-7]{55}\b/g, "[REDACTED]");
+
+  // Provider secret API keys (sk_live_... / sk_test_...)
+  result = result.replace(/\bsk_(?:live|test)_[A-Za-z0-9]{8,}\b/g, "[REDACTED]");
 
   // Generic "password=value" patterns
   result = result.replace(/password\s*=\s*[^\s;,]+/gi, "password=[REDACTED]");
@@ -119,10 +123,10 @@ export function redactString(input: unknown): string {
 export function safeLog(
   level: "info" | "warn" | "error" | "debug",
   message: string,
-  data?: unknown
+  data?: unknown,
 ): void {
-  const method = level as keyof typeof console;
-  if (typeof console[method] !== "function") {
+  const method = console[level];
+  if (typeof method !== "function") {
     return;
   }
 
@@ -131,9 +135,9 @@ export function safeLog(
   const safeData = data !== undefined ? redact(data) : undefined;
 
   if (safeData === undefined) {
-    console[method](safeMessage);
+    method(safeMessage);
   } else {
-    console[method](safeMessage, safeData);
+    method(safeMessage, safeData);
   }
 }
 

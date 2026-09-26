@@ -54,7 +54,8 @@ const httpDuration = new Histogram({
 
 export const METRIC_NAMING_CONVENTION = {
   prefix: "vela",
-  pattern: /^vela_([a-z0-9]+)_([a-z0-9_]+)_(total|seconds|bytes|depth|count|ratio|info|status|lag_seconds)$/,
+  pattern:
+    /^vela_([a-z0-9]+)_([a-z0-9_]+)_(total|seconds|bytes|depth|count|ratio|info|status|lag_seconds)$/,
   allowedSuffixes: [
     "total",
     "seconds",
@@ -154,11 +155,23 @@ function outcomeCounter(name: string, help: string) {
 }
 
 const walletCreated = outcomeCounter("vela_wallet_created_total", "Wallet creation attempts");
-const walletPasskeyAuth = outcomeCounter("vela_wallet_passkey_auth_total", "Passkey auth (connect) attempts");
-const walletTxSigned = outcomeCounter("vela_wallet_tx_signed_total", "Transaction submit/sign completions");
+const walletPasskeyAuth = outcomeCounter(
+  "vela_wallet_passkey_auth_total",
+  "Passkey auth (connect) attempts",
+);
+const walletTxSigned = outcomeCounter(
+  "vela_wallet_tx_signed_total",
+  "Transaction submit/sign completions",
+);
 const policyDeployed = outcomeCounter("vela_policy_deployed_total", "Policy instance deploys");
-const policyPoisonMessages = outcomeCounter("vela_policy_poison_messages_total", "Quarantined poison messages");
-const workerVerification = outcomeCounter("vela_worker_verification_total", "Verification outcomes");
+const policyPoisonMessages = outcomeCounter(
+  "vela_policy_poison_messages_total",
+  "Quarantined poison messages",
+);
+const workerVerification = outcomeCounter(
+  "vela_worker_verification_total",
+  "Verification outcomes",
+);
 const lifecycleCleanupCompleted = outcomeCounter(
   "vela_lifecycle_cleanup_completed_total",
   "Account cleanup/merge completions",
@@ -225,6 +238,24 @@ const circuitBreakerStateChanges = new Counter({
 });
 assertMetricName("vela_circuit_breaker_state_changes_total");
 
+/** M7 reaper (#295): stranded verification jobs returned to the queue, by the
+ * attempt count they had reached, and jobs parked in dead_letter. */
+const workerVerificationRetry = new Counter({
+  name: "vela_worker_verification_retry_total",
+  help: "Stranded verification jobs reclaimed for retry",
+  labelNames: ["service", "attempt"] as const,
+  registers: [registry],
+});
+assertMetricName("vela_worker_verification_retry_total");
+
+const workerVerificationDeadLetter = new Counter({
+  name: "vela_worker_verification_dead_letter_total",
+  help: "Verification jobs dead-lettered after exhausting their attempts",
+  labelNames: ["service"] as const,
+  registers: [registry],
+});
+assertMetricName("vela_worker_verification_dead_letter_total");
+
 export const domainMetrics = {
   walletCreated,
   walletPasskeyAuth,
@@ -244,6 +275,10 @@ export const domainMetrics = {
   verificationTurnaround: workerVerificationTurnaround,
   workerQueueDepth,
   workerProcessingLagSeconds,
+  workerVerificationRetry,
+  verificationRetry: workerVerificationRetry,
+  workerVerificationDeadLetter,
+  verificationDeadLetter: workerVerificationDeadLetter,
   circuitBreakerStateChanges,
 } as const;
 

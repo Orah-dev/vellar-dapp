@@ -149,12 +149,18 @@ export function redactAuditEvent(event: AuditEvent, salt: string): AuditEvent {
     // POST /lifecycle/inspect returns { account: HorizonAccount }
     // DROP the entire account object
     // No fields to preserve
-  } else if (eventType === "lifecycle.plan_requested" || eventType === "lifecycle.cleanup_planned") {
+  } else if (
+    eventType === "lifecycle.plan_requested" ||
+    eventType === "lifecycle.cleanup_planned"
+  ) {
     // POST /lifecycle/plan returns { plan: CleanupPlan }
     if (event.data.plan) {
       redacted.data.plan = redactPlan(event.data.plan);
     }
-  } else if (eventType === "lifecycle.execute_requested" || eventType === "lifecycle.cleanup_executed") {
+  } else if (
+    eventType === "lifecycle.execute_requested" ||
+    eventType === "lifecycle.cleanup_executed"
+  ) {
     // POST /lifecycle/execute returns { steps: CleanupStep[], plan: CleanupPlan }
     if (event.data.plan) {
       redacted.data.plan = redactPlan(event.data.plan);
@@ -162,7 +168,10 @@ export function redactAuditEvent(event: AuditEvent, salt: string): AuditEvent {
     if (Array.isArray(event.data.steps)) {
       redacted.data.steps = (event.data.steps as unknown[]).map((step) => redactStep(step));
     }
-  } else if (eventType === "lifecycle.merge_requested" || eventType === "lifecycle.account_merged") {
+  } else if (
+    eventType === "lifecycle.merge_requested" ||
+    eventType === "lifecycle.account_merged"
+  ) {
     // POST /lifecycle/merge returns { step: CleanupStep }
     if (event.data.step) {
       redacted.data.step = redactStep(event.data.step);

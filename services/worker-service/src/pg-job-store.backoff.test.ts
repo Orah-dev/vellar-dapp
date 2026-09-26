@@ -34,7 +34,10 @@ describe.skipIf(!DATABASE_URL)("pg-job-store reaper with exponential backoff (M7
     attempts = 0,
   ) {
     const rec = record(id, contractId);
-    const recordWithAttempts: VerificationRecordInternal = { ...rec, updatedAt: new Date().toISOString() };
+    const recordWithAttempts: VerificationRecordInternal = {
+      ...rec,
+      updatedAt: new Date().toISOString(),
+    };
     await db.execute(sql`
       INSERT INTO verification_records (id, contract_id, status, created_at, updated_at, record)
       VALUES (
@@ -63,7 +66,13 @@ describe.skipIf(!DATABASE_URL)("pg-job-store reaper with exponential backoff (M7
   }
 
   beforeAll(async () => {
-    pool = new pg.Pool({ connectionString: DATABASE_URL });
+    // Own schema per test file: vitest runs files (and turbo runs packages) in
+    // parallel against one database, and these suites TRUNCATE + reseed.
+    pool = new pg.Pool({
+      connectionString: DATABASE_URL,
+      options: "-c search_path=worker_pg_job_store_backoff_test",
+    });
+    await pool.query("CREATE SCHEMA IF NOT EXISTS worker_pg_job_store_backoff_test");
     db = drizzle(pool);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS verification_records (

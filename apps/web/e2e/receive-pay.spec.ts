@@ -125,7 +125,10 @@ test.describe("receive + SEP-7 payment requests @ci", () => {
       });
       await page.goto(payUrl(uri));
 
-      await expect(page.getByRole("alert")).toHaveText(message);
+      // Next's route announcer is also role="alert"; match only the app's.
+      await expect(page.locator('[role="alert"]:not(#__next-route-announcer__)')).toHaveText(
+        message,
+      );
       await expect(page.getByText(/nothing was signed or sent/i)).toBeVisible();
       await expect(page.getByLabel(/recipient/i)).toHaveCount(0);
       expect(dialogShown).toBe(false);

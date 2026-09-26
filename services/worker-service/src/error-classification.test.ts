@@ -9,7 +9,11 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { isTransientFailure, classifyError, type ErrorClassificationResult } from "./error-classification";
+import {
+  isTransientFailure,
+  classifyError,
+  type ErrorClassificationResult,
+} from "./error-classification";
 import { ArtifactResolveError } from "./resolver";
 import { BuildExecutorError } from "./executor";
 
@@ -136,12 +140,20 @@ describe("Error Classification (Issue #295)", () => {
     });
 
     it("classifies 'clone_failed' as transient (git service availability)", () => {
-      const err = new BuildExecutorError("Git clone failed", "clone_failed", "fatal: unable to access repo");
+      const err = new BuildExecutorError(
+        "Git clone failed",
+        "clone_failed",
+        "fatal: unable to access repo",
+      );
       expect(isTransientFailure(err)).toBe(true);
     });
 
     it("classifies 'build_failed' as transient (timeout/resource constraint)", () => {
-      const err = new BuildExecutorError("Build exited with code 1", "build_failed", "compilation error");
+      const err = new BuildExecutorError(
+        "Build exited with code 1",
+        "build_failed",
+        "compilation error",
+      );
       expect(isTransientFailure(err)).toBe(true);
     });
 
@@ -241,10 +253,7 @@ describe("Error Classification (Issue #295)", () => {
 
     it("classifies Stellar SDK contract not found correctly", () => {
       // Realistic "contract not found" wrapped in ArtifactResolveError
-      const err = new ArtifactResolveError(
-        "XDRError: unable to decode ContractData",
-        "rpc_error",
-      );
+      const err = new ArtifactResolveError("XDRError: unable to decode ContractData", "rpc_error");
       // This is classified as transient (generic rpc_error)
       // A true "contract not found" would be classified as "not_found" explicitly
       expect(isTransientFailure(err)).toBe(true);

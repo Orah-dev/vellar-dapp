@@ -72,7 +72,12 @@ export function passphraseToNetwork(passphrase?: string): "testnet" | "mainnet" 
 }
 
 export function mapToSep43Error(err: unknown): Sep43Error {
-  if (err && typeof err === "object" && "code" in err && typeof (err as Sep43Error).code === "number") {
+  if (
+    err &&
+    typeof err === "object" &&
+    "code" in err &&
+    typeof (err as Sep43Error).code === "number"
+  ) {
     return err as Sep43Error;
   }
   if (err instanceof ProviderError) {
@@ -169,7 +174,7 @@ export function createSep43Provider(options: PageProviderOptions): Sep43Provider
       try {
         const netPayload = await call({ method: "get_network", params: {} });
         const network =
-          "result" in netPayload && netPayload.result
+          "result" in netPayload && netPayload.result && "network" in netPayload.result
             ? (netPayload.result.network as "testnet" | "mainnet")
             : "testnet";
         const connectPayload = await call({ method: "connect", params: { network } });
@@ -212,7 +217,7 @@ export function createSep43Provider(options: PageProviderOptions): Sep43Provider
       try {
         const network = opts?.networkPassphrase
           ? passphraseToNetwork(opts.networkPassphrase)
-          : (await this.getNetwork()).network as "testnet" | "mainnet";
+          : ((await this.getNetwork()).network as "testnet" | "mainnet");
         const payload = await call({ method: "sign_transaction", params: { xdr, network } });
         const res = unwrap<{ signedXdr: string; signedTxXdr?: string; signerAddress?: string }>(
           payload,
@@ -234,7 +239,7 @@ export function createSep43Provider(options: PageProviderOptions): Sep43Provider
       try {
         const network = opts?.networkPassphrase
           ? passphraseToNetwork(opts.networkPassphrase)
-          : (await this.getNetwork()).network as "testnet" | "mainnet";
+          : ((await this.getNetwork()).network as "testnet" | "mainnet");
         const payload = await call({ method: "sign_auth_entry", params: { authEntry, network } });
         const res = unwrap<{ signedAuthEntry: string; signerAddress?: string }>(
           payload,
@@ -256,7 +261,7 @@ export function createSep43Provider(options: PageProviderOptions): Sep43Provider
       try {
         const network = opts?.networkPassphrase
           ? passphraseToNetwork(opts.networkPassphrase)
-          : (await this.getNetwork()).network as "testnet" | "mainnet";
+          : ((await this.getNetwork()).network as "testnet" | "mainnet");
         const payload = await call({ method: "sign_message", params: { message, network } });
         const res = unwrap<{ signedMessage: string; signerAddress?: string }>(
           payload,
