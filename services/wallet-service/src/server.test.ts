@@ -547,23 +547,6 @@ describe("POST /wallet/submit funding-path scoping (C1/H1/V2)", () => {
   });
 });
 
-async function createAndConnect(server: FastifyInstance) {
-  const create = await server.inject({
-    method: "POST",
-    url: "/wallet/create",
-    payload: createBody,
-  });
-  const connect = await server.inject({
-    method: "POST",
-    url: "/wallet/connect",
-    payload: { keyId: createBody.keyId, network: "testnet" },
-  });
-  return {
-    createSessionId: create.json().sessionId as string,
-    connectSessionId: connect.json().sessionId as string,
-  };
-}
-
 describe("session management (§5.1) — bearer capability (RA-3/M1)", () => {
   const bearer = (id: string) => ({ authorization: `Bearer ${id}` });
 
@@ -838,22 +821,6 @@ describe("GET /wallet/transactions (issue #256)", () => {
   const PASSPHRASE = "Test SDF Network ; September 2015";
   const KEY_ID = "AAECAwQFBgcICQoLDA0ODw";
   const CONTRACT_ID = deriveWalletContractId(KEY_ID, { networkPassphrase: PASSPHRASE });
-
-  // Local to this describe block, matching build()'s non-derivation-gated
-  // server (no networkPassphrase): the outer session-management describe
-  // block defines its own createAndConnect, but it is not in scope here.
-  async function createAndConnect(server: FastifyInstance) {
-    const create = await server.inject({ method: "POST", url: "/wallet/create", payload: createBody });
-    const connect = await server.inject({
-      method: "POST",
-      url: "/wallet/connect",
-      payload: { keyId: createBody.keyId, network: "testnet" },
-    });
-    return {
-      createSessionId: create.json().sessionId as string,
-      connectSessionId: connect.json().sessionId as string,
-    };
-  }
 
   // A derivation-gated server (networkPassphrase set) rejects a create whose
   // contractId isn't derive(keyId) (V1), so the end-to-end tests below (which
