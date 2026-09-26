@@ -23,7 +23,7 @@ import {
 } from "./templates";
 import type { PolicyDeployer } from "./deploy";
 import { DEPLOY_FEE, PolicyDeployError } from "./deploy";
-import { buildServer, createMemoryPolicyRepository } from "./server";
+import { buildServer, createMemoryPolicyRepository, type PolicyRecord, type PolicyRepository } from "./server";
 
 const G1 = "GCMCEGOUVALP2H6LTY7IPUUMSFKDQUMK3SDU5DI7LETNEZZKHRIIALKM";
 const G2 = "GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL3";
@@ -366,6 +366,156 @@ describe("Policy API", () => {
     expect(deploy.statusCode).toBe(404);
     const get = await server.inject({ url: "/policies/nope" });
     expect(get.statusCode).toBe(404);
+  });
+});
+
+describe("GET /policies (issue #257)", () => {
+  function minimalRecord(overrides: Partial<PolicyRecord>): PolicyRecord {
+    return {
+      id: overrides.id ?? "id",
+      createdAt: overrides.createdAt ?? new Date().toISOString(),
+      status: overrides.status ?? "generated",
+      definition: spendingPolicy,
+      policyHash: "hash",
+      manifest: {
+        template: "spending_limit",
+        network: "testnet",
+        enforcement: { kind: "policy-contract", wasmHash: SPENDING_POLICY_WASM_HASH },
+      },
+      ...overrides,
+    };
+  }
+
+  async function seed(policies: PolicyRepository, records: PolicyRecord[]) {
+    for (const r of records) await policies.insert(r);
+  }
+
+  it("filters by status", async () => {
+    const policies = createMemoryPolicyRepository();
+    await seed(policies, [
+      minimalRecord({ id: "p1", status: "generated", createdAt: "2024-01-01T00:00:00.000Z" }),
+      minimalRecord({ id: "p2", status: "deployed", createdAt: "2024-01-02T00:00:00.000Z" }),
+      minimalRecord({ id: "p3", status: "instance_deployed", createdAt: "2024-01-03T00:00:00.000Z" }),
+    ]);
+    app = buildServer({ policies });
+    const res = await app.inject({ url: "/policies?status=deployed" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().policies.map((p: PolicyRecord) => p.id)).toEqual(["p2"]);
+  });
+
+  it("rejects an unknown status value with 400 (issue #257's own example values do not exist in this codebase)", async () => {
+    app = buildServer({ policies: createMemoryPolicyRepository() });
+    const res = await app.inject({ url: "/policies?status=active" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_status");
+  });
+
+  it("filters by created_after and created_before (inclusive range)", async () => {
+    const policies = createMemoryPolicyRepository();
+    await seed(policies, [
+      minimalRecord({ id: "p1", createdAt: "2024-01-01T00:00:00.000Z" }),
+      minimalRecord({ id: "p2", createdAt: "2024-01-15T00:00:00.000Z" }),
+      minimalRecord({ id: "p3", createdAt: "2024-02-01T00:00:00.000Z" }),
+    ]);
+    app = buildServer({ policies });
+    const res = await app.inject({
+      url: "/policies?created_after=2024-01-10T00:00:00.000Z&created_before=2024-01-20T00:00:00.000Z",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().policies.map((p: PolicyRecord) => p.id)).toEqual(["p2"]);
+  });
+
+  it("rejects a malformed created_after with 400, not a silent no-op filter", async () => {
+    app = buildServer({ policies: createMemoryPolicyRepository() });
+    const res = await app.inject({ url: "/policies?created_after=not-a-date" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_created_after");
+  });
+
+  it("rejects created_after later than created_before with 400", async () => {
+    app = buildServer({ policies: createMemoryPolicyRepository() });
+    const res = await app.inject({
+      url: "/policies?created_after=2024-02-01T00:00:00.000Z&created_before=2024-01-01T00:00:00.000Z",
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_date_range");
+  });
+
+  it("combines status and date-range filters", async () => {
+    const policies = createMemoryPolicyRepository();
+    await seed(policies, [
+      minimalRecord({ id: "p1", status: "deployed", createdAt: "2024-01-05T00:00:00.000Z" }),
+      minimalRecord({ id: "p2", status: "generated", createdAt: "2024-01-05T00:00:00.000Z" }),
+      minimalRecord({ id: "p3", status: "deployed", createdAt: "2024-03-01T00:00:00.000Z" }),
+    ]);
+    app = buildServer({ policies });
+    const res = await app.inject({
+      url: "/policies?status=deployed&created_after=2024-01-01T00:00:00.000Z&created_before=2024-02-01T00:00:00.000Z",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().policies.map((p: PolicyRecord) => p.id)).toEqual(["p1"]);
+  });
+
+  it("paginates newest-first with no skip or duplicate across pages", async () => {
+    const policies = createMemoryPolicyRepository();
+    await seed(
+      policies,
+      Array.from({ length: 5 }, (_, i) =>
+        minimalRecord({ id: `p${i}`, createdAt: `2024-01-0${i + 1}T00:00:00.000Z` }),
+      ),
+    );
+    app = buildServer({ policies });
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const url = cursor ? `/policies?limit=2&cursor=${encodeURIComponent(cursor)}` : "/policies?limit=2";
+      const res = await app.inject({ url });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.policies.length).toBeLessThanOrEqual(2);
+      for (const p of body.policies) seen.push(p.id);
+      if (!body.hasMore) {
+        expect(body.nextCursor).toBeNull();
+        break;
+      }
+      expect(body.nextCursor).toBeTruthy();
+      cursor = body.nextCursor;
+    }
+    expect(seen).toEqual(["p4", "p3", "p2", "p1", "p0"]);
+  });
+
+  it("returns an empty page (not an error) when nothing matches", async () => {
+    app = buildServer({ policies: createMemoryPolicyRepository() });
+    const res = await app.inject({ url: "/policies" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ policies: [], hasMore: false, nextCursor: null });
+  });
+
+  it("rejects a malformed cursor with 400, not 500", async () => {
+    app = buildServer({ policies: createMemoryPolicyRepository() });
+    const res = await app.inject({ url: "/policies?cursor=not-a-real-cursor" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_cursor");
+  });
+
+  it("rejects a non-positive-integer limit with 400", async () => {
+    app = buildServer({ policies: createMemoryPolicyRepository() });
+    const res = await app.inject({ url: "/policies?limit=0" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_limit");
+  });
+
+  it("caps an oversized limit rather than trusting the caller", async () => {
+    const policies = createMemoryPolicyRepository();
+    await seed(
+      policies,
+      Array.from({ length: 3 }, (_, i) => minimalRecord({ id: `p${i}`, createdAt: `2024-01-0${i + 1}T00:00:00.000Z` })),
+    );
+    app = buildServer({ policies });
+    const res = await app.inject({ url: "/policies?limit=999999" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().policies).toHaveLength(3);
   });
 });
 

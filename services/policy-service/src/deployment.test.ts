@@ -58,6 +58,11 @@ function createDeps(overrides?: Partial<DeploymentDeps>): DeploymentDeps {
     async update(record) {
       policies.set(record.id, record);
     },
+    // Deployment flow tests never exercise GET /policies (issue #257); throw
+    // loudly rather than silently returning an empty page if that ever changes.
+    listPage() {
+      throw new Error("listPage is not used by the deployment flow tests");
+    },
   };
 
   return {
@@ -170,6 +175,9 @@ describe("deployPolicyInstance", () => {
       },
       async update(record) {
         policies.set(record.id, record);
+      },
+      listPage() {
+        throw new Error("listPage is not used by the deployment flow tests");
       },
     };
 
@@ -308,6 +316,9 @@ describe("verifyAndRecordAttach", () => {
       },
       async update(record) {
         policies.set(record.id, record);
+      },
+      listPage() {
+        throw new Error("listPage is not used by the deployment flow tests");
       },
     };
 
