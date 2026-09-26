@@ -4,8 +4,18 @@ import { expect, test, type Page } from "@playwright/test";
 // gateway MOCKED (page.route), so it runs in CI with no backend/secrets. The
 // real chain interaction (build → hash → compare deployed wasm) is covered by
 // worker-service's pipeline.e2e + resolver tests + the live proof in
-// docs/decisions.md; this spec proves the USER flow: submit source → poll status
-// → see the trust badge, and the explorer path.
+// docs/decisions.md; this spec proves the USER flow: submit source → check
+// status (manually, via the explorer tab) → see the trust badge.
+//
+// Correction (issue #472 audit): this comment previously claimed "poll
+// status" as part of the covered flow. Checked app/verify/page.tsx directly:
+// there is no client-side polling anywhere in the real component (no
+// setInterval/setTimeout tied to a "submitted"/"building" status). A
+// submission's outcome is only ever surfaced by the user manually re-running
+// the explorer check (the "verified"/"unverified" tests below) — polling is
+// a feature this app does not have, not a test-coverage gap this spec was
+// missing. Fixing the comment rather than adding a test for behavior that
+// does not exist.
 
 const CONTRACT = "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67";
 
