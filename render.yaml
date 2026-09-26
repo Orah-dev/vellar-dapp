@@ -18,7 +18,7 @@
 # DATABASE_URL as a secret instead.
 #
 # Secrets NOT in this file (set them in the Render dashboard, marked sync:false):
-#   RELAYER_API_KEY, SPONSOR_SECRET_KEY
+#   RELAYER_API_KEY, SPONSOR_SECRET_KEY, SPONSOR_PUBLIC_KEY
 #   ⚠ VERIFY THESE ARE MAINNET CREDENTIALS after this cutover. Flipping
 #   RELAYER_BASE_URL/network config here does NOT change what's already set
 #   in the Render dashboard — a leftover testnet API key or sponsor secret
@@ -38,7 +38,11 @@ services:
     autoDeploy: false
     # Render runs from the repo root; install the workspace, then start the
     # combined backend. (The SDK is a published npm dep — nothing to pre-build.)
-    buildCommand: "corepack enable && pnpm install --frozen-lockfile"
+    # The backend runs under tsx, which strips types WITHOUT checking them, so
+    # there is no compile step to catch a type error. Typecheck all-in-one and
+    # every workspace package it depends on as part of the build, so a commit
+    # that doesn't typecheck fails the deploy instead of shipping.
+    buildCommand: "corepack enable && pnpm install --frozen-lockfile && pnpm exec turbo run typecheck --filter=@vellar/all-in-one..."
     startCommand: "pnpm --filter @vellar/all-in-one start"
     healthCheckPath: /health
     envVars:
@@ -85,6 +89,12 @@ services:
       - key: RELAYER_API_KEY
         sync: false
       - key: SPONSOR_SECRET_KEY
+        sync: false
+      # §8 Q3: the PUBLIC account SPONSOR_SECRET_KEY must sign as. Required on
+      # mainnet — wallet-service and policy-service refuse to boot without it,
+      # or if the secret signs as a different account. Confirm it is a mainnet
+      # account first: tsx scripts/verify-signing-keys.ts --network mainnet --sponsor G...
+      - key: SPONSOR_PUBLIC_KEY
         sync: false
 
 databases:

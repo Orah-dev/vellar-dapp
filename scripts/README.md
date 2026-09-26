@@ -16,7 +16,21 @@ services' READMEs rather than duplicated there.
   within that window. Used as the promotion gate in
   [api-gateway's canary deploy stage](../services/api-gateway/README.md#canary-deploy-stage-336).
 
-Both are plain functions (`runHealthGate`, `runCanaryGate`) with injectable
+- **`verify-signing-keys.ts`** (architecture-analysis.md §8 Q3) — given the
+  PUBLIC sponsor / attestor keys a deployment is pinned to
+  (`SPONSOR_PUBLIC_KEY` / `ATTESTOR_PUBLIC_KEY`) and its `STELLAR_NETWORK`,
+  looks each account up on both the mainnet and testnet Horizons and fails if
+  it doesn't exist on the declared network (flagging "WRONG NETWORK" when it
+  exists only on the other one). Also checks `RELAYER_BASE_URL` agrees. Never
+  takes a secret. The services themselves refuse to boot when a secret doesn't
+  sign as its pin (`@vellar/service-kit` `verifySigningKeys`).
+
+  ```sh
+  tsx scripts/verify-signing-keys.ts --network mainnet --sponsor G... \
+    --relayer-url https://channels.openzeppelin.com
+  ```
+
+The gate scripts are plain functions (`runHealthGate`, `runCanaryGate`) with injectable
 fetch/sleep/clock, so they're unit-tested without any real network calls or
 timers — see the sibling `.test.ts` files — and are also runnable directly
 as CLIs via `tsx`.

@@ -3,10 +3,14 @@ import {
   createUnavailableBudget,
   hostFromEnv,
   portFromEnv,
+  probeSigningKeysOnChain,
   resolveNetwork,
   resolvePersistencePolicy,
+  signingKeyFromEnv,
   startService,
   tryConnectDb,
+  verifySigningKeys,
+  type SigningKeyReport,
   type SpendBudget,
 } from "@vellar/service-kit";
 import type { DbHandle } from "./db/client";
@@ -93,6 +97,48 @@ const budgetNetwork = resolveNetwork({
   passphrase: config.relayer?.networkPassphrase ?? DEFAULTS.networkPassphrase,
   rpcUrl: process.env.STELLAR_RPC_URL || DEFAULTS.rpcUrl,
 });
+// Q3 (architecture-analysis.md §8): the sponsor secret and relayer are set
+// out-of-band, so confirm they belong to the declared network before anything
+// can sign or spend with them. Refuses to boot on a mismatch; see
+// service-kit/signing-keys.ts.
+const { Keypair, rpc: stellarRpc } = await import("@stellar/stellar-sdk");
+let signingKeys: SigningKeyReport;
+try {
+  signingKeys = verifySigningKeys({
+    network: budgetNetwork,
+    keys: [signingKeyFromEnv("sponsor")],
+    relayerBaseUrl: process.env.RELAYER_BASE_URL || undefined,
+    derivePublicKey: (secret) => Keypair.fromSecret(secret).publicKey(),
+    allowUnpinned: process.env.ALLOW_UNPINNED_SIGNING_KEYS === "1",
+  });
+} catch (err) {
+  console.error(`[wallet-service] ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
+{
+  const rpcServer = new stellarRpc.Server(config.relayer?.rpcUrl ?? DEFAULTS.rpcUrl);
+  void probeSigningKeysOnChain(signingKeys, async (publicKey) => {
+    try {
+      await rpcServer.getAccount(publicKey);
+      return "found";
+    } catch (err) {
+      if (err instanceof Error && /not found/i.test(err.message)) return "not_found";
+      throw err;
+    }
+  }).then((results) => {
+    for (const r of results) {
+      if (r.status === "found") {
+        console.info(`[wallet-service] ${r.role} key ${r.publicKey} confirmed on ${budgetNetwork}.`);
+      } else {
+        console.warn(
+          `[wallet-service] ${r.role} key ${r.publicKey} could not be confirmed on ${budgetNetwork} ` +
+            `(${r.status}${r.detail ? `: ${r.detail}` : ""}) — sponsored submissions will fail until it is funded there.`,
+        );
+      }
+    }
+  });
+}
+
 let budget: SpendBudget;
 if (dbHandle) {
   const { createPgSpendBudget } = await import("@vellar/service-kit");
