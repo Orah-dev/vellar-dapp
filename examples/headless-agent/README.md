@@ -45,6 +45,7 @@ Based on **technical-doc.md §17.3, §17.4, §17.5**, `docs/decisions.md` (2026-
 ### 1. Install dependencies
 
 From the monorepo root:
+
 ```bash
 pnpm install
 ```
@@ -80,6 +81,7 @@ pnpm --filter @vellar/example-headless-agent start
 ```
 
 When an agent exceeds its assigned on-chain budget:
+
 ```
 [Agent] 🛑 Budget policy rejected payment for https://api.vellar.xyz/lifecycle/execute. Re-simulation failed at __check_auth.
 [Agent] Reason: PaymentRejectedError: x402 payment was not accepted: policy rejected spend over-budget
@@ -98,6 +100,7 @@ When an agent exceeds its assigned on-chain budget:
 ## Running Tests
 
 Run the test suite with network mocks:
+
 ```bash
 pnpm --filter @vellar/example-headless-agent test
 ```

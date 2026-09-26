@@ -13,6 +13,8 @@ const C1 = "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67";
 const WALLET = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 const POLICY_CONTRACT = "CA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUWDA";
 
+const CONSTRUCTOR_ARGS = { dailyLimitStroops: "1000000000", windowSeconds: 86400 };
+
 /**
  * Helper to create a minimal PolicyRecord for testing.
  */
@@ -21,13 +23,21 @@ function createRecord(overrides?: Partial<PolicyRecord>): PolicyRecord {
     id: "policy-123",
     createdAt: new Date().toISOString(),
     status: "generated",
+    definition: {
+      version: "1",
+      type: "spending_limit",
+      owners: [C1],
+      spendingLimits: { dailyXlm: "100" },
+    },
     policyHash: "hash123",
     manifest: {
+      template: "spending_limit",
       enforcement: {
         kind: "policy-contract",
         wasmHash: "wasm123",
-        constructorArgs: { dailyLimitStroops: "1000000000", windowSeconds: 86400 },
+        constructorArgs: CONSTRUCTOR_ARGS,
       },
+      network: "testnet",
     },
   };
   return { ...base, ...overrides };
@@ -75,7 +85,7 @@ describe("simulatePolicyDeploy", () => {
     expect(result).toEqual({ ok: true, minResourceFee: "12345" });
     expect(simulateInstance).toHaveBeenCalledWith({
       wallet: WALLET,
-      constructorArgs: record.manifest.enforcement.constructorArgs,
+      constructorArgs: CONSTRUCTOR_ARGS,
     });
   });
 
@@ -92,10 +102,16 @@ describe("simulatePolicyDeploy", () => {
   it("throws if policy is not contract-enforced", async () => {
     const deps = createDeps({ deployer: { simulateInstance: vi.fn() } as never });
     const record = createRecord({
-      manifest: { enforcement: { kind: "signer-limits" } },
+      manifest: {
+        template: "spending_limit",
+        enforcement: { kind: "signer-limits" },
+        network: "testnet",
+      },
     });
 
-    await expect(simulatePolicyDeploy(deps, record, WALLET)).rejects.toThrow(/not contract-enforced/);
+    await expect(simulatePolicyDeploy(deps, record, WALLET)).rejects.toThrow(
+      /not contract-enforced/,
+    );
   });
 });
 
@@ -126,7 +142,7 @@ describe("deployPolicyInstance", () => {
     // Deployer was called
     expect(deployInstance).toHaveBeenCalledWith({
       wallet: WALLET,
-      constructorArgs: record.manifest.enforcement.constructorArgs,
+      constructorArgs: CONSTRUCTOR_ARGS,
     });
 
     // Record was updated
@@ -180,7 +196,9 @@ describe("deployPolicyInstance", () => {
     });
     const record = createRecord();
 
-    await expect(deployPolicyInstance(deps, record, WALLET)).rejects.toThrow("deploy_budget_exceeded");
+    await expect(deployPolicyInstance(deps, record, WALLET)).rejects.toThrow(
+      "deploy_budget_exceeded",
+    );
   });
 
   it("fails closed: a budget accounting error refuses the deploy", async () => {
@@ -192,13 +210,15 @@ describe("deployPolicyInstance", () => {
     });
     const record = createRecord();
 
-    await expect(deployPolicyInstance(deps, record, WALLET)).rejects.toThrow("deploy_budget_exceeded");
+    await expect(deployPolicyInstance(deps, record, WALLET)).rejects.toThrow(
+      "deploy_budget_exceeded",
+    );
   });
 
   it("throws PolicyDeployError if deployer fails", async () => {
-    const deployInstance = vi.fn().mockRejectedValue(
-      new PolicyDeployError("deploy failed", "deploy_simulation_failed"),
-    );
+    const deployInstance = vi
+      .fn()
+      .mockRejectedValue(new PolicyDeployError("deploy failed", "deploy_simulation_failed"));
     const deps = createDeps({
       deployer: { deployInstance } as never,
     });
@@ -210,10 +230,16 @@ describe("deployPolicyInstance", () => {
   it("throws if policy is not contract-enforced", async () => {
     const deps = createDeps({ deployer: { deployInstance: vi.fn() } as never });
     const record = createRecord({
-      manifest: { enforcement: { kind: "signer-limits" } },
+      manifest: {
+        template: "spending_limit",
+        enforcement: { kind: "signer-limits" },
+        network: "testnet",
+      },
     });
 
-    await expect(deployPolicyInstance(deps, record, WALLET)).rejects.toThrow(/not contract-enforced/);
+    await expect(deployPolicyInstance(deps, record, WALLET)).rejects.toThrow(
+      /not contract-enforced/,
+    );
   });
 
   it("skips budget check if budget is not configured", async () => {

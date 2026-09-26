@@ -185,7 +185,9 @@ async function main() {
   });
 
   if (result.ok) {
-    console.log(`✓ Healthy for ${parsed.consecutive ?? DEFAULT_CONSECUTIVE} consecutive checks. Safe to proceed.`);
+    console.log(
+      `✓ Healthy for ${parsed.consecutive ?? DEFAULT_CONSECUTIVE} consecutive checks. Safe to proceed.`,
+    );
     process.exit(0);
   } else {
     console.error(

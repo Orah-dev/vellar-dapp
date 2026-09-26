@@ -11,75 +11,85 @@ Lifecycle-service audit logs currently expose personally identifiable informatio
 ## Audit Log Call Sites Inventory
 
 ### Endpoint: POST /lifecycle/inspect
+
 **Purpose:** Inspect a classic account's state (balances, offers, data entries)  
 **Trigger:** User requests account inspection  
 **Logged Data:** Full HorizonAccount object including accountId, all balances, all offers, all data keys
 
 **Fields Logged (Current):**
-| Field | Type | Value Example | PII Classification |
-|-------|------|----------------|-------------------|
-| `account.accountId` | string | `"GXXXXX...XXXXX"` | **RAW PII** — Unique account identifier |
-| `account.sequence` | string | `"12345"` | Operational — Transaction sequence |
-| `account.balances[].assetType` | string | `"native"` or `"credit_alphanum4"` | Operational — Asset type category |
-| `account.balances[].assetCode` | string? | `"USDC"` | Operational — Public asset code (non-PII if from public ledger) |
-| `account.balances[].assetIssuer` | string? | `"GXXXXX...XXXXX"` | **RAW PII** — Issuer account identifier |
-| `account.balances[].balance` | string | `"1000.5000000"` | **SENSITIVE** — User's balance information |
-| `account.dataKeys` | string[] | `["user_id", "profile_data"]` | **RAW PII** — User-defined data keys |
-| `account.offers` | HorizonOffer[] | (see below) | **RAW PII** — User's DEX activity |
-| `account.offers[].id` | string | `"123456789"` | **SENSITIVE** — Specific offer identifier |
-| `account.offers[].sellingAssetIssuer` | string? | `"GXXXXX...XXXXX"` | **RAW PII** — Counterparty account |
-| `account.offers[].buyingAssetIssuer` | string? | `"GXXXXX...XXXXX"` | **RAW PII** — Counterparty account |
-| `account.offers[].price` | string | `"2.5"` | **SENSITIVE** — User's offer pricing |
+
+| Field                                 | Type           | Value Example                      | PII Classification                                              |
+| ------------------------------------- | -------------- | ---------------------------------- | --------------------------------------------------------------- |
+| `account.accountId`                   | string         | `"GXXXXX...XXXXX"`                 | **RAW PII** — Unique account identifier                         |
+| `account.sequence`                    | string         | `"12345"`                          | Operational — Transaction sequence                              |
+| `account.balances[].assetType`        | string         | `"native"` or `"credit_alphanum4"` | Operational — Asset type category                               |
+| `account.balances[].assetCode`        | string?        | `"USDC"`                           | Operational — Public asset code (non-PII if from public ledger) |
+| `account.balances[].assetIssuer`      | string?        | `"GXXXXX...XXXXX"`                 | **RAW PII** — Issuer account identifier                         |
+| `account.balances[].balance`          | string         | `"1000.5000000"`                   | **SENSITIVE** — User's balance information                      |
+| `account.dataKeys`                    | string[]       | `["user_id", "profile_data"]`      | **RAW PII** — User-defined data keys                            |
+| `account.offers`                      | HorizonOffer[] | (see below)                        | **RAW PII** — User's DEX activity                               |
+| `account.offers[].id`                 | string         | `"123456789"`                      | **SENSITIVE** — Specific offer identifier                       |
+| `account.offers[].sellingAssetIssuer` | string?        | `"GXXXXX...XXXXX"`                 | **RAW PII** — Counterparty account                              |
+| `account.offers[].buyingAssetIssuer`  | string?        | `"GXXXXX...XXXXX"`                 | **RAW PII** — Counterparty account                              |
+| `account.offers[].price`              | string         | `"2.5"`                            | **SENSITIVE** — User's offer pricing                            |
 
 ### Endpoint: POST /lifecycle/plan
+
 **Purpose:** Build a cleanup plan (identify blockers preventing account closure)  
 **Trigger:** User requests cleanup plan  
 **Logged Data:** CleanupPlan object with accountId, destination, detailed blockers
 
 **Fields Logged (Current):**
-| Field | Type | Value Example | PII Classification |
-|-------|------|----------------|-------------------|
-| `plan.accountId` | string | `"GXXXXX...XXXXX"` | **RAW PII** — Source account to close |
-| `plan.destination` | string | `"GXXXXX...XXXXX"` | **RAW PII** — Receiving account for XLM |
-| `plan.blockers[].type` | string | `"balance"`, `"trustline"`, `"offer"`, `"data"` | Operational — Blocker category |
-| `plan.blockers[].description` | string | `"Holds 100.5 USDC"` | **SENSITIVE** — Reveals balances and asset holdings |
-| `plan.blockers[].actionRequired` | string | `"Transfer or burn the USDC balance..."` | **SENSITIVE** — User action guidance (reveals what they hold) |
-| `plan.estimatedTransactions` | number | `5` | Operational — Cleanup complexity indicator |
-| `plan.mergeReady` | boolean | `false` | Operational — Status flag |
+
+| Field                            | Type    | Value Example                                   | PII Classification                                            |
+| -------------------------------- | ------- | ----------------------------------------------- | ------------------------------------------------------------- |
+| `plan.accountId`                 | string  | `"GXXXXX...XXXXX"`                              | **RAW PII** — Source account to close                         |
+| `plan.destination`               | string  | `"GXXXXX...XXXXX"`                              | **RAW PII** — Receiving account for XLM                       |
+| `plan.blockers[].type`           | string  | `"balance"`, `"trustline"`, `"offer"`, `"data"` | Operational — Blocker category                                |
+| `plan.blockers[].description`    | string  | `"Holds 100.5 USDC"`                            | **SENSITIVE** — Reveals balances and asset holdings           |
+| `plan.blockers[].actionRequired` | string  | `"Transfer or burn the USDC balance..."`        | **SENSITIVE** — User action guidance (reveals what they hold) |
+| `plan.estimatedTransactions`     | number  | `5`                                             | Operational — Cleanup complexity indicator                    |
+| `plan.mergeReady`                | boolean | `false`                                         | Operational — Status flag                                     |
 
 ### Endpoint: POST /lifecycle/execute
+
 **Purpose:** Build unsigned cleanup transactions  
 **Trigger:** User requests transaction preparation  
 **Logged Data:** Array of CleanupStep objects + CleanupPlan (same as /plan)
 
 **Fields Logged (Current):**
-| Field | Type | Value Example | PII Classification |
-|-------|------|----------------|-------------------|
-| `steps[].title` | string | `"Clean up the account (1/3)"` | Operational — User-facing step label |
-| `steps[].description` | string | `"Transaction 1 of 3 — sign and submit in order..."` | Operational — Instruction text |
-| `steps[].xdr` | string | (base64 transaction envelope) | **SENSITIVE** — Full transaction data (contains account IDs, operations) |
-| `steps[].hash` | string | (hex transaction hash) | Operational — Deterministic hash for tracking |
-| `plan.*` | (see /plan above) | — | Same as /plan endpoint |
+
+| Field                 | Type              | Value Example                                        | PII Classification                                                       |
+| --------------------- | ----------------- | ---------------------------------------------------- | ------------------------------------------------------------------------ |
+| `steps[].title`       | string            | `"Clean up the account (1/3)"`                       | Operational — User-facing step label                                     |
+| `steps[].description` | string            | `"Transaction 1 of 3 — sign and submit in order..."` | Operational — Instruction text                                           |
+| `steps[].xdr`         | string            | (base64 transaction envelope)                        | **SENSITIVE** — Full transaction data (contains account IDs, operations) |
+| `steps[].hash`        | string            | (hex transaction hash)                               | Operational — Deterministic hash for tracking                            |
+| `plan.*`              | (see /plan above) | —                                                    | Same as /plan endpoint                                                   |
 
 ### Endpoint: POST /lifecycle/merge
+
 **Purpose:** Build final account-merge transaction (only when all blockers cleared)  
 **Trigger:** User confirms merge  
 **Logged Data:** Single CleanupStep (merge transaction)
 
 **Fields Logged (Current):**
-| Field | Type | Value Example | PII Classification |
-|-------|------|----------------|-------------------|
-| `step.title` | string | `"Merge and close the account"` | Operational — User-facing step label |
-| `step.description` | string | `"Closes GXXXXX... and sends entire XLM..."` | **SENSITIVE** — Contains raw account IDs |
-| `step.xdr` | string | (base64 transaction envelope) | **SENSITIVE** — Full transaction data (contains account IDs) |
-| `step.hash` | string | (hex transaction hash) | Operational — Deterministic hash for tracking |
+
+| Field              | Type   | Value Example                                | PII Classification                                           |
+| ------------------ | ------ | -------------------------------------------- | ------------------------------------------------------------ |
+| `step.title`       | string | `"Merge and close the account"`              | Operational — User-facing step label                         |
+| `step.description` | string | `"Closes GXXXXX... and sends entire XLM..."` | **SENSITIVE** — Contains raw account IDs                     |
+| `step.xdr`         | string | (base64 transaction envelope)                | **SENSITIVE** — Full transaction data (contains account IDs) |
+| `step.hash`        | string | (hex transaction hash)                       | Operational — Deterministic hash for tracking                |
 
 ## Redaction Classification and Strategy
 
 ### Category 1: Raw PII — DROP Entirely
+
 These fields directly identify users and have no legitimate audit value. They are dropped completely.
 
 **Fields:**
+
 - `accountId` — Unique Stellar account identifier
 - `destination` — Receiving account identifier
 - `assetIssuer` — Counterparty account identifiers
@@ -92,9 +102,11 @@ These fields directly identify users and have no legitimate audit value. They ar
 **Rationale:** These fields expose the user's identity and activity. They are not needed for audit log usefulness — operators can correlate entries by hashed account references and deterministic transaction hashes.
 
 ### Category 2: Retained-But-Sensitive — HASH with Consistent Salt
+
 These fields are useful for audit correlation (e.g., tracking all operations for a single account) but must not expose raw values. We hash them with a consistent, server-controlled salt so the same input always produces the same hash (deterministic), enabling correlation without exposing PII.
 
 **Fields and Transformation:**
+
 - `accountId` → `accountRef: SHA256(accountId || salt).substring(0, 12)`
   - Enables correlation: "All events for accountRef=abc123d456e7 are linked"
   - Prevents recovery: Hash is one-way; raw account cannot be derived
@@ -112,18 +124,22 @@ These fields are useful for audit correlation (e.g., tracking all operations for
   - Hides identity: Does not expose actual key names
 
 **Salt Generation:**
+
 - The salt is generated once per service instance and remains constant for the lifetime of the service
 - This ensures consistent hashing: `SHA256(value || salt)` always produces the same hash for the same value
 - The salt is NOT shared externally and NOT logged; it is internal to the redaction function
 - Salt is generated from `crypto.randomBytes(32).toString('hex')` at service startup
 
 **Hash Output Length:**
+
 - Truncated to 12 hexadecimal characters (48 bits) — sufficient to prevent accidental collisions for audit correlation without encoding the full hash length
 
 ### Category 3: Operational Non-PII — KEEP As-Is
+
 These fields contain no PII and are necessary for audit trail usefulness. They are logged without modification.
 
 **Fields:**
+
 - `sequence` — Transaction sequence number (operational state, not identifying)
 - `balances` (array count only) → `balanceCount: number`
   - Kept: Operational indicator of account complexity
@@ -143,9 +159,11 @@ These fields contain no PII and are necessary for audit trail usefulness. They a
   - Kept: No PII; operational
 
 ### Transaction XDR (Signed Transactions)
+
 **Decision:** DROP entirely from audit logs.
 
 **Rationale:**
+
 - Transaction XDR envelope contains full operation details including source account, destination, asset issuers, amounts — all PII
 - The transaction hash is deterministic and already captured separately (sufficient for tracking and replay detection)
 - Including the full XDR exposes more PII than hashing can reasonably handle at audit-log time
@@ -158,6 +176,7 @@ These fields contain no PII and are necessary for audit trail usefulness. They a
 ### Centralized Wrapper Function
 
 All audit logging goes through a single `redactAuditEvent()` function. This ensures:
+
 1. **Consistency:** All PII redaction follows the same rules
 2. **Single Point of Control:** A future contributor reviewing audit logging can find the redaction logic in one place
 3. **Structural Safety:** It is structurally difficult to bypass — all audit calls must pass through the same wrapper, making it hard to accidentally log unredacted data
@@ -167,19 +186,19 @@ All audit logging goes through a single `redactAuditEvent()` function. This ensu
 ```typescript
 /**
  * Redacts PII from a lifecycle-service audit event before persistence.
- * 
+ *
  * Applies consistent redaction rules:
  * - Raw PII (account IDs, data keys, offers) are dropped entirely
  * - Sensitive fields needed for correlation (accounts, destinations) are SHA256-hashed with a service-level salt
  * - Operational fields (counts, types, hashes) are preserved as-is
- * 
+ *
  * The same input always produces the same redacted output (deterministic hashing),
  * enabling correlation across audit entries without exposing raw PII.
- * 
+ *
  * @param event - The audit event before redaction
  * @returns Redacted audit event safe for persistence and external shipment
  */
-export function redactAuditEvent(event: AuditEvent): AuditEvent
+export function redactAuditEvent(event: AuditEvent): AuditEvent;
 ```
 
 ### Redaction Rules Applied (Pseudocode)
@@ -206,7 +225,9 @@ For each audit event:
 ## Testing Strategy
 
 ### Test 1: Complete Field Redaction for Each Endpoint
+
 For every field classified as "DROP", verify it does not appear in the redacted audit log output:
+
 - `accountId` never appears in `redactedEvent.data`
 - `destination` never appears in plain text
 - `blockers[].description` never appears
@@ -214,20 +235,26 @@ For every field classified as "DROP", verify it does not appear in the redacted 
 - `account` object never appears
 
 ### Test 2: Deterministic Hashing for Correlation
+
 Verify that the same input always produces the same hash:
+
 - Two redacted events for the same account hash to the same `accountRef`
 - Two redacted events for different accounts hash to different `accountRef` values
 - A human cannot reverse the hash to recover the original account ID
 
 ### Test 3: Operational Field Preservation
+
 Verify operational fields are unchanged:
+
 - `step.hash` is preserved exactly
 - `plan.estimatedTransactions` is preserved
 - `blockerTypes` list is correct (e.g., `["balance", "trustline"]` for an account with those blockers)
 - `balanceCount` reflects the correct count
 
 ### Test 4: Structural Bypass Prevention
+
 Verify that all audit log call sites go through the redaction wrapper:
+
 - If a new endpoint calls `audit.record()` without passing through `redactAuditEvent()`, the test should detect it
 - This is enforced by either:
   - All `audit.record()` calls being wrapped in a lifecycle-service-specific wrapper
@@ -276,6 +303,7 @@ Verify that all audit log call sites go through the redaction wrapper:
 ## Appendix: Example Audit Events
 
 ### Before Redaction (POST /lifecycle/plan)
+
 ```json
 {
   "type": "lifecycle.plan_requested",
@@ -299,6 +327,7 @@ Verify that all audit log call sites go through the redaction wrapper:
 ```
 
 ### After Redaction (POST /lifecycle/plan)
+
 ```json
 {
   "type": "lifecycle.plan_requested",

@@ -1,3 +1,4 @@
+import { StrKey } from "@stellar/stellar-sdk";
 import type { CleanupPlan } from "@vellar/types";
 import type { HorizonAccount } from "./horizon";
 
@@ -5,10 +6,11 @@ import type { HorizonAccount } from "./horizon";
 // doc's CleanupPlan — every blocker explicit, merge only when none remain.
 // Destructive flows are guided planners with user review, never one-click.
 
-const CLASSIC_ACCOUNT_RE = /^G[A-Z2-7]{55}$/;
-
+// Full StrKey check (version byte + checksum), not just the shape: a
+// well-shaped but invalid G… address would otherwise pass here and throw later
+// inside the transaction builder as a 500.
 export function isClassicAccountId(value: string): boolean {
-  return CLASSIC_ACCOUNT_RE.test(value);
+  return StrKey.isValidEd25519PublicKey(value);
 }
 
 /** Operations fit ~100 to a transaction; the final merge is its own tx. */

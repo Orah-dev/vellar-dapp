@@ -44,6 +44,15 @@ export interface VerificationOutcome {
   retryAttempt?: number;
 }
 
+/** Fixed, public guidance for build failures a submitter can act on. Static
+ * text only — never err.message, which can carry URLs, hosts or paths (H3). */
+const PUBLIC_BUILD_HINTS: Partial<Record<BuildExecutorError["code"], string>> = {
+  dependencies_unresolved:
+    "Dependencies could not be resolved for an offline build: commit an up-to-date Cargo.lock that uses only crates.io and public https git dependencies (no submodules).",
+  dependency_fetch_failed:
+    "A dependency host was unreachable while pre-fetching from Cargo.lock; the build will be retried.",
+};
+
 export interface RunVerificationDeps {
   executor: BuildExecutor;
   resolver: ContractArtifactResolver;
@@ -140,7 +149,9 @@ export async function runVerification(
         // Public: the failure CODE only (e.g. clone_failed, build_failed,
         // repo_url_rejected) — never err.log, which may carry clone stderr /
         // host paths (H3). Full detail goes to the private log.
-        statusDetail: `Build failed (${err.code}).`,
+        statusDetail: [`Build failed (${err.code}).`, PUBLIC_BUILD_HINTS[err.code]]
+          .filter(Boolean)
+          .join(" "),
         log: `Build failed: ${err.message} (${err.code}).\n\n${err.log}`.trim(),
         isRetryable: isTransient,
         retryAttempt,

@@ -119,7 +119,9 @@ export function createAnalyticsTracker() {
     try {
       // In production, send to your analytics backend.
       // For now, we persist to localStorage for testing/inspection.
-      const stored = JSON.parse(localStorage.getItem("vellar.analytics.events") ?? "[]") as AnalyticsEvent[];
+      const stored = JSON.parse(
+        localStorage.getItem("vellar.analytics.events") ?? "[]",
+      ) as AnalyticsEvent[];
       stored.push(...events);
       // Keep only the last 1000 events in localStorage
       localStorage.setItem("vellar.analytics.events", JSON.stringify(stored.slice(-1000)));
@@ -196,10 +198,7 @@ export const walletCreationEvents = {
    * User clicks the "Create wallet" button and passkey prompt is about to open.
    * Includes whether a username was provided.
    */
-  createInitiated: (
-    options: { hasUsername: boolean },
-    context: Partial<EventContext>,
-  ) => {
+  createInitiated: (options: { hasUsername: boolean }, context: Partial<EventContext>) => {
     getAnalyticsTracker().emit(
       "wallet.creation.initiated",
       { hasUsername: options.hasUsername },
@@ -273,11 +272,7 @@ export const walletCreationEvents = {
    * before completion.
    */
   funnelAbandoned: (options: { step: string }, context: Partial<EventContext>) => {
-    getAnalyticsTracker().emit(
-      "wallet.funnel.abandoned",
-      { step: options.step },
-      context,
-    );
+    getAnalyticsTracker().emit("wallet.funnel.abandoned", { step: options.step }, context);
   },
 };
 
@@ -303,20 +298,14 @@ export const walletSignInEvents = {
   /**
    * Backend successfully authenticated the passkey and session restored.
    */
-  signinCompleted: (
-    options: { network: Network },
-    context: Partial<EventContext>,
-  ) => {
+  signinCompleted: (options: { network: Network }, context: Partial<EventContext>) => {
     getAnalyticsTracker().emit("wallet.signin.completed", { network: options.network }, context);
   },
 
   /**
    * Sign-in failed (e.g., passkey not found, network error).
    */
-  signinFailed: (
-    options: { failureReason: string },
-    context: Partial<EventContext>,
-  ) => {
+  signinFailed: (options: { failureReason: string }, context: Partial<EventContext>) => {
     getAnalyticsTracker().emit(
       "wallet.signin.failed",
       { failureReason: options.failureReason },

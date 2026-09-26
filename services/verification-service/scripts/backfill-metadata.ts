@@ -93,10 +93,9 @@ async function resolveDeployedHash(contractId: string, rpcUrl: string): Promise<
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (/not found|could not (be )?found|missing/i.test(message)) {
-      throw Object.assign(
-        new Error(`contract ${contractId} not found on-chain`),
-        { code: "not_found" as const },
-      );
+      throw Object.assign(new Error(`contract ${contractId} not found on-chain`), {
+        code: "not_found" as const,
+      });
     }
     throw Object.assign(new Error(message), { code: "rpc_error" as const });
   }
@@ -154,10 +153,7 @@ async function backfillRecord(
 
   // Fetch deployedHash from blockchain
   if (verbose) console.log(`  FETCH: ${id} (${contractId})`);
-  const result = await withRetry(
-    () => resolveDeployedHash(contractId, rpcUrl),
-    MAX_RETRIES,
-  );
+  const result = await withRetry(() => resolveDeployedHash(contractId, rpcUrl), MAX_RETRIES);
 
   if (!result.success) {
     if (verbose) console.log(`  FAILED: ${id} — ${result.error}`);
@@ -339,19 +335,14 @@ async function main(): Promise<void> {
     }
 
     if (isDryRun) {
-      console.log(
-        "\n⚠ DRY-RUN: No changes written. Run with --confirm to apply changes.",
-      );
+      console.log("\n⚠ DRY-RUN: No changes written. Run with --confirm to apply changes.");
     } else {
       console.log("\n✓ Backfill complete.");
     }
 
     process.exit(stats.failed > 0 ? 1 : 0);
   } catch (err) {
-    console.error(
-      "Fatal error:",
-      err instanceof Error ? err.message : String(err),
-    );
+    console.error("Fatal error:", err instanceof Error ? err.message : String(err));
     if (verbose && err instanceof Error) {
       console.error(err.stack);
     }

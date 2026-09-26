@@ -16,6 +16,7 @@ Implemented centralized PII redaction for lifecycle-service audit logs. All four
 ## Files Created
 
 ### Core Redaction Logic
+
 - **`services/lifecycle-service/src/audit-redaction.ts`** (210 lines)
   - `generateRedactionSalt()` — Generates deterministic salt for the service instance
   - `hashForRedaction(value, salt)` — SHA256 hash (12 characters) for PII fields
@@ -23,6 +24,7 @@ Implemented centralized PII redaction for lifecycle-service audit logs. All four
   - Applies event-type-specific redaction rules
 
 ### Audit Logging Infrastructure
+
 - **`services/lifecycle-service/src/audit.ts`** (90 lines)
   - `AuditLog` interface for recording and listing events
   - `createMemoryAuditLog(salt)` — In-memory implementation with auto-redaction
@@ -30,6 +32,7 @@ Implemented centralized PII redaction for lifecycle-service audit logs. All four
   - `initializeAuditLog(impl)` — One-time service initialization
 
 ### Tests
+
 - **`services/lifecycle-service/src/audit-redaction.test.ts`** (520 lines)
   - 30+ unit tests covering:
     - Hash determinism (same input → same output)
@@ -58,6 +61,7 @@ Implemented centralized PII redaction for lifecycle-service audit logs. All four
     - No PII leakage across entire service
 
 ### Documentation
+
 - **`AUDIT_LOG_PII_INVENTORY.md`** (400 lines)
   - Complete field inventory for all endpoints
   - Classification: DROP, HASH, KEEP for each field
@@ -74,6 +78,7 @@ Implemented centralized PII redaction for lifecycle-service audit logs. All four
   - Future extensions guidance
 
 ### Modified Files
+
 - **`services/lifecycle-service/src/server.ts`** (+120 lines)
   - Updated `LifecycleServiceDeps` to include `auditLog: AuditLog`
   - Added `audit.record()` calls to all 4 endpoints
@@ -88,48 +93,54 @@ Implemented centralized PII redaction for lifecycle-service audit logs. All four
 ## PII Redaction Rules
 
 ### Event: `lifecycle.account_inspected` (POST /lifecycle/inspect)
-| Field | Action | Reason |
-|-------|--------|--------|
+
+| Field                                    | Action   | Reason                                                        |
+| ---------------------------------------- | -------- | ------------------------------------------------------------- |
 | `account` (entire HorizonAccount object) | **DROP** | No audit value; full account state not needed for audit trail |
 
 ### Event: `lifecycle.cleanup_planned` (POST /lifecycle/plan)
-| Field | Action | Reason |
-|-------|--------|--------|
-| `plan.accountId` | **HASH** → `accountRef` | Track correlation; hide identity |
-| `plan.destination` | **HASH** → `destinationRef` | Same |
-| `plan.blockers[].description` | **DROP** | Contains sensitive balance/asset info |
-| `plan.blockers[].actionRequired` | **DROP** | Reveals user's holdings |
-| `plan.blockerTypes` | **KEEP** | Operational; needed for cleanup complexity |
-| `plan.estimatedTransactions` | **KEEP** | Operational; not identifying |
-| `plan.mergeReady` | **KEEP** | Status flag; not identifying |
+
+| Field                            | Action                      | Reason                                     |
+| -------------------------------- | --------------------------- | ------------------------------------------ |
+| `plan.accountId`                 | **HASH** → `accountRef`     | Track correlation; hide identity           |
+| `plan.destination`               | **HASH** → `destinationRef` | Same                                       |
+| `plan.blockers[].description`    | **DROP**                    | Contains sensitive balance/asset info      |
+| `plan.blockers[].actionRequired` | **DROP**                    | Reveals user's holdings                    |
+| `plan.blockerTypes`              | **KEEP**                    | Operational; needed for cleanup complexity |
+| `plan.estimatedTransactions`     | **KEEP**                    | Operational; not identifying               |
+| `plan.mergeReady`                | **KEEP**                    | Status flag; not identifying               |
 
 ### Event: `lifecycle.cleanup_executed` (POST /lifecycle/execute)
-| Field | Action | Reason |
-|-------|--------|--------|
-| `steps[].xdr` | **DROP** | Full transaction envelope with account IDs |
-| `steps[].description` | **DROP** | Contains raw account IDs |
-| `steps[].hash` | **KEEP** | Deterministic; useful for tracking |
-| `steps[].title` | **KEEP** | Generic step label; not identifying |
-| `plan.*` | (same as cleanup_planned) | — |
+
+| Field                 | Action                    | Reason                                     |
+| --------------------- | ------------------------- | ------------------------------------------ |
+| `steps[].xdr`         | **DROP**                  | Full transaction envelope with account IDs |
+| `steps[].description` | **DROP**                  | Contains raw account IDs                   |
+| `steps[].hash`        | **KEEP**                  | Deterministic; useful for tracking         |
+| `steps[].title`       | **KEEP**                  | Generic step label; not identifying        |
+| `plan.*`              | (same as cleanup_planned) | —                                          |
 
 ### Event: `lifecycle.account_merged` (POST /lifecycle/merge)
-| Field | Action | Reason |
-|-------|--------|--------|
-| `step.xdr` | **DROP** | Full transaction envelope |
-| `step.description` | **DROP** | Contains raw account IDs |
-| `step.hash` | **KEEP** | Transaction hash for tracking |
-| `step.title` | **KEEP** | Generic label |
+
+| Field              | Action   | Reason                        |
+| ------------------ | -------- | ----------------------------- |
+| `step.xdr`         | **DROP** | Full transaction envelope     |
+| `step.description` | **DROP** | Contains raw account IDs      |
+| `step.hash`        | **KEEP** | Transaction hash for tracking |
+| `step.title`       | **KEEP** | Generic label                 |
 
 ---
 
 ## Test Coverage
 
 **Total Tests:** 65+
+
 - Redaction logic: 30+ tests
 - Audit infrastructure: 15+ tests
 - Integration/endpoints: 20+ tests
 
 **Coverage includes:**
+
 - ✅ No raw account IDs leak in any audit output
 - ✅ Hashing is deterministic (correlation preserved)
 - ✅ Hashing is one-way (raw values unrecoverable)
@@ -200,6 +211,7 @@ root/
 ## Next Steps
 
 To deploy:
+
 1. Install dependencies: `npm install` (in workspace root)
 2. Run tests: `npm run test` (in services/lifecycle-service)
 3. Verify types: `npm run typecheck`
@@ -212,6 +224,7 @@ The implementation is ready for review and merge once dependencies are installed
 ## Appendix: Example Audit Event (Before → After Redaction)
 
 ### Before Redaction (Raw Data)
+
 ```json
 {
   "type": "lifecycle.cleanup_planned",
@@ -235,6 +248,7 @@ The implementation is ready for review and merge once dependencies are installed
 ```
 
 ### After Redaction (Persisted)
+
 ```json
 {
   "type": "lifecycle.cleanup_planned",

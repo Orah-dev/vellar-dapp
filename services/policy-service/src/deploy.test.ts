@@ -9,7 +9,10 @@ import { createPolicyDeployer, PolicyDeployError } from "./deploy";
 const WASM_HASH_HEX = "00".repeat(32);
 const SPONSOR = Keypair.random();
 
-function baseConfig(rpcUrl: string, overrides: Partial<Parameters<typeof createPolicyDeployer>[0]> = {}) {
+function baseConfig(
+  rpcUrl: string,
+  overrides: Partial<Parameters<typeof createPolicyDeployer>[0]> = {},
+) {
   return {
     rpcUrl,
     networkPassphrase: "Test SDF Network ; September 2015",

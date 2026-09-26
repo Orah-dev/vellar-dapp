@@ -1,10 +1,4 @@
-import {
-  Address,
-  StrKey,
-  buildAuthorizationEntryPreimage,
-  hash,
-  xdr,
-} from "@stellar/stellar-sdk";
+import { Address, StrKey, buildAuthorizationEntryPreimage, hash, xdr } from "@stellar/stellar-sdk";
 
 export interface NonExtractableAgentKey {
   /** The Ed25519 CryptoKeyPair held in memory with extractable: false */
@@ -69,24 +63,15 @@ function comparePolicyAddresses(a: string, b: string): number {
 }
 
 function ed25519SignerKey(rawPk: Uint8Array): xdr.ScVal {
-  return xdr.ScVal.scvVec([
-    xdr.ScVal.scvSymbol("Ed25519"),
-    xdr.ScVal.scvBytes(Buffer.from(rawPk)),
-  ]);
+  return xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("Ed25519"), xdr.ScVal.scvBytes(Buffer.from(rawPk))]);
 }
 
 function ed25519Signature(sig: Uint8Array): xdr.ScVal {
-  return xdr.ScVal.scvVec([
-    xdr.ScVal.scvSymbol("Ed25519"),
-    xdr.ScVal.scvBytes(Buffer.from(sig)),
-  ]);
+  return xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("Ed25519"), xdr.ScVal.scvBytes(Buffer.from(sig))]);
 }
 
 function policySignerKey(policyAddress: string): xdr.ScVal {
-  return xdr.ScVal.scvVec([
-    xdr.ScVal.scvSymbol("Policy"),
-    new Address(policyAddress).toScVal(),
-  ]);
+  return xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("Policy"), new Address(policyAddress).toScVal()]);
 }
 
 function policySignature(): xdr.ScVal {
@@ -115,11 +100,7 @@ export function createWebCryptoSessionKeySigner(
       }
 
       creds.address().signatureExpirationLedger(expirationLedger);
-      const preimage = buildAuthorizationEntryPreimage(
-        entry,
-        expirationLedger,
-        networkPassphrase,
-      );
+      const preimage = buildAuthorizationEntryPreimage(entry, expirationLedger, networkPassphrase);
       const payloadHash = hash(preimage.toXDR());
 
       // Sign the payload hash using the non-extractable WebCrypto private key

@@ -12,7 +12,7 @@ describe("Admin DLQ API", () => {
   let dlqStore = createMemoryDLQStore();
   let jobStore = new InMemoryDeployJobStore();
   let policyRepo = createMemoryPolicyRepository();
-  let dlqMetrics: DLQMetrics;
+  let dlqMetrics: Required<DLQMetrics>;
 
   beforeEach(async () => {
     app = Fastify();
@@ -24,7 +24,7 @@ describe("Admin DLQ API", () => {
       dlq_enqueue_total: { inc: vi.fn() },
       dlq_requeue_total: { inc: vi.fn() },
       dlq_depth_gauge: { set: vi.fn() },
-    } as any;
+    };
 
     registerAdminDLQRoutes(app, {
       dlqStore,

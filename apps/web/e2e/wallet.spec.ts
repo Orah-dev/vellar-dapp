@@ -9,7 +9,10 @@ import { fundSmartWallet } from "./fund";
 // referenced here only because these existing spec files already cite it by
 // section number; §15's exact wording could not be independently verified.
 
-async function enableVirtualAuthenticator(context: import("@playwright/test").BrowserContext, page: import("@playwright/test").Page) {
+async function enableVirtualAuthenticator(
+  context: import("@playwright/test").BrowserContext,
+  page: import("@playwright/test").Page,
+) {
   const cdp = await context.newCDPSession(page);
   await cdp.send("WebAuthn.enable");
   await cdp.send("WebAuthn.addVirtualAuthenticator", {

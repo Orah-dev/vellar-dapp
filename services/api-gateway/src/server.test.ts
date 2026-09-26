@@ -344,4 +344,3 @@ describe("api-gateway structured request logging", () => {
     }
   });
 });
-

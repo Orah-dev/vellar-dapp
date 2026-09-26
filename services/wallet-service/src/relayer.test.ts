@@ -117,4 +117,3 @@ describe("createUnconfiguredSubmitter", () => {
     await expect(attempt).rejects.toMatchObject({ code: "relayer_not_configured" });
   });
 });
-

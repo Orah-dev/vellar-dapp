@@ -120,12 +120,7 @@ async function runCleanupViaRepo(
 const NOW_MS = new Date("2026-08-29T12:00:00Z").getTime();
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function makeRow(
-  id: string,
-  status: string,
-  ageInDays: number,
-  now = NOW_MS,
-): FakeRow {
+function makeRow(id: string, status: string, ageInDays: number, now = NOW_MS): FakeRow {
   const updatedAt = new Date(now - ageInDays * DAY_MS);
   return {
     id,
@@ -160,17 +155,17 @@ describe("runCleanup — eligible row selection", () => {
     //   recent + terminal → ineligible (inside the retention window)
     const store = makeStore([
       // eligible: old + terminal
-      makeRow("old-verified",    "verified",    100), // 100 days old > 90d threshold
-      makeRow("old-failed",      "failed",      95),
+      makeRow("old-verified", "verified", 100), // 100 days old > 90d threshold
+      makeRow("old-failed", "failed", 95),
       makeRow("old-dead-letter", "dead_letter", 91),
 
       // ineligible: old but NOT terminal (submitted / building are active)
-      makeRow("old-submitted",   "submitted",   100), // old but still active
-      makeRow("old-building",    "building",    100), // old but still active
+      makeRow("old-submitted", "submitted", 100), // old but still active
+      makeRow("old-building", "building", 100), // old but still active
 
       // ineligible: terminal but RECENT (inside retention window)
-      makeRow("new-verified",    "verified",    30),  // 30 days old < 90d threshold
-      makeRow("new-failed",      "failed",      1),   // 1 day old
+      makeRow("new-verified", "verified", 30), // 30 days old < 90d threshold
+      makeRow("new-failed", "failed", 1), // 1 day old
     ]);
 
     const repo = createFakeCleanupRepository(store);
@@ -193,9 +188,7 @@ describe("runCleanup — eligible row selection", () => {
   });
 
   it("archives the eligible rows with correct data and an archived_at timestamp", async () => {
-    const store = makeStore([
-      makeRow("old-verified", "verified", 100),
-    ]);
+    const store = makeStore([makeRow("old-verified", "verified", 100)]);
     const repo = createFakeCleanupRepository(store);
 
     await runCleanupViaRepo(repo, BASE_CONFIG);
@@ -212,7 +205,7 @@ describe("runCleanup — eligible row selection", () => {
 
   it("does nothing when there are no eligible rows", async () => {
     const store = makeStore([
-      makeRow("new-verified", "verified", 10),   // recent — ineligible
+      makeRow("new-verified", "verified", 10), // recent — ineligible
       makeRow("old-submitted", "submitted", 200), // old but active — ineligible
     ]);
     const repo = createFakeCleanupRepository(store);
@@ -233,10 +226,7 @@ describe("runCleanup — idempotency (interrupted run safety)", () => {
 
     // First pass: archive succeeds, delete is simulated as failing (we just
     // don't call deleteByIds to mimic the crash).
-    const ids = await repo.findEligible(
-      new Date(NOW_MS - 90 * DAY_MS),
-      500,
-    );
+    const ids = await repo.findEligible(new Date(NOW_MS - 90 * DAY_MS), 500);
     await repo.archiveByIds(ids, new Date(NOW_MS));
     // Row is archived but still in the live table.
     expect(store.archive.has("old-verified")).toBe(true);
@@ -246,7 +236,7 @@ describe("runCleanup — idempotency (interrupted run safety)", () => {
     // should complete the delete.
     const result = await runCleanupViaRepo(repo, BASE_CONFIG);
     expect(result.archived).toBe(0); // ON CONFLICT DO NOTHING — already archived
-    expect(result.deleted).toBe(1);  // delete completes
+    expect(result.deleted).toBe(1); // delete completes
     expect(store.rows.has("old-verified")).toBe(false);
     // Archive entry unchanged
     expect(store.archive.get("old-verified")!.archived_at).toEqual(new Date(NOW_MS));
@@ -256,9 +246,7 @@ describe("runCleanup — idempotency (interrupted run safety)", () => {
 describe("runCleanup — batch size", () => {
   it("processes only up to batchSize rows per run", async () => {
     // Seed 10 eligible rows
-    const rows = Array.from({ length: 10 }, (_, i) =>
-      makeRow(`row-${i}`, "verified", 100),
-    );
+    const rows = Array.from({ length: 10 }, (_, i) => makeRow(`row-${i}`, "verified", 100));
     const store = makeStore(rows);
     const repo = createFakeCleanupRepository(store);
 
@@ -277,7 +265,7 @@ describe("runCleanup — hard-delete mode (archiveEnabled=false)", () => {
   it("deletes eligible rows without writing to the archive", async () => {
     const store = makeStore([
       makeRow("old-verified", "verified", 100),
-      makeRow("old-failed",   "failed",   100),
+      makeRow("old-failed", "failed", 100),
     ]);
     const repo = createFakeCleanupRepository(store);
 

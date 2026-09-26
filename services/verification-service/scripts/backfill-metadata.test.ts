@@ -42,16 +42,14 @@ class MockArtifactResolver {
       return FIXTURES.onChainHash;
     }
     if (contractId === FIXTURES.contractNotFound) {
-      throw Object.assign(
-        new Error(`contract ${contractId} not found on-chain`),
-        { code: "not_found" as const },
-      );
+      throw Object.assign(new Error(`contract ${contractId} not found on-chain`), {
+        code: "not_found" as const,
+      });
     }
     if (contractId === FIXTURES.contractSAC) {
-      throw Object.assign(
-        new Error("built-in Stellar Asset Contract, not a wasm contract"),
-        { code: "not_wasm" as const },
-      );
+      throw Object.assign(new Error("built-in Stellar Asset Contract, not a wasm contract"), {
+        code: "not_wasm" as const,
+      });
     }
     throw Object.assign(new Error(`unexpected contract: ${contractId}`), {
       code: "rpc_error" as const,
@@ -175,16 +173,12 @@ describe("backfill-metadata", () => {
     }
 
     // Clear test data before each test
-    await db
-      .delete(verificationRecords)
-      .where(sql`id LIKE 'test-rec-%'`);
+    await db.delete(verificationRecords).where(sql`id LIKE 'test-rec-%'`);
   });
 
   afterEach(async () => {
     // Clean up
-    await db
-      .delete(verificationRecords)
-      .where(sql`id LIKE 'test-rec-%'`);
+    await db.delete(verificationRecords).where(sql`id LIKE 'test-rec-%'`);
     await pool.end();
   });
 

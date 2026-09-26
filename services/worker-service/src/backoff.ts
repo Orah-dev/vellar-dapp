@@ -50,7 +50,7 @@ export function calculateBackoffDelay(
  * This prevents a poisoned job from looping forever and avoids thundering
  * herd when multiple workers encounter an outage simultaneously.
  */
-export const BACKOFF_CONFIG = {
+export const BACKOFF_CONFIG = Object.freeze({
   /** Maximum number of attempts including the first (M7). */
   MAX_ATTEMPTS: 5,
 
@@ -62,4 +62,4 @@ export const BACKOFF_CONFIG = {
 
   /** Total theoretical maximum retry window (sum of all max delays). */
   MAX_RETRY_WINDOW_MS: 120_000,
-} as const;
+} as const);

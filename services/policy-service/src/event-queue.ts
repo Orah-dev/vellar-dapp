@@ -105,15 +105,13 @@ export class PolicyEventQueue<T = unknown> {
   /**
    * Enqueue a new event message.
    */
-  async enqueue(
-    event: {
-      eventType: string;
-      payload: T;
-      id?: string;
-      maxAttempts?: number;
-      correlationId?: string;
-    },
-  ): Promise<PolicyEventMessage<T>> {
+  async enqueue(event: {
+    eventType: string;
+    payload: T;
+    id?: string;
+    maxAttempts?: number;
+    correlationId?: string;
+  }): Promise<PolicyEventMessage<T>> {
     const msg: PolicyEventMessage<T> = {
       id: event.id ?? randomUUID(),
       eventType: event.eventType,

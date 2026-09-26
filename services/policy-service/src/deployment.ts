@@ -20,7 +20,12 @@ import {
   verifyAttachTx,
   type TxLookup,
 } from "./verify-attach";
-import { recordOutcome, domainMetrics, type SpendBudget, type BudgetNetwork } from "@vellar/service-kit";
+import {
+  recordOutcome,
+  domainMetrics,
+  type SpendBudget,
+  type BudgetNetwork,
+} from "@vellar/service-kit";
 import type { PolicyRecord, PolicyRepository } from "./server";
 import type { Network } from "@vellar/types";
 

@@ -1,0 +1,14 @@
+[package]
+name = "vellar-hermetic-net-probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+panic = "abort"

@@ -37,7 +37,10 @@ const validUpload = {
 
 function ok(raw: unknown) {
   const result = validateImportedRecord(raw);
-  expect(result.ok, `expected ok but got: ${!result.ok ? (result as { reason: string }).reason : ""}`).toBe(true);
+  expect(
+    result.ok,
+    `expected ok but got: ${!result.ok ? (result as { reason: string }).reason : ""}`,
+  ).toBe(true);
   return result;
 }
 
@@ -378,12 +381,12 @@ describe("toClaimedJob", () => {
 describe("validateImportedRecord — mixed batch simulation", () => {
   it("only valid records pass through; each invalid one has a specific reason", () => {
     const batch: unknown[] = [
-      validRepo,                                             // valid
-      { ...validRepo, id: "bad-1", contractId: G1 },        // bad contractId
-      { ...validRepo, id: "bad-2", toolchainVersion: "" },  // empty toolchain
-      { ...validUpload, id: "rec-003" },                     // valid upload
-      { ...validRepo, id: "bad-3", status: "unknown" },     // bad status enum
-      { ...validRepo, id: "bad-4", commitHash: "zz" },      // bad commitHash
+      validRepo, // valid
+      { ...validRepo, id: "bad-1", contractId: G1 }, // bad contractId
+      { ...validRepo, id: "bad-2", toolchainVersion: "" }, // empty toolchain
+      { ...validUpload, id: "rec-003" }, // valid upload
+      { ...validRepo, id: "bad-3", status: "unknown" }, // bad status enum
+      { ...validRepo, id: "bad-4", commitHash: "zz" }, // bad commitHash
     ];
 
     const valid: string[] = [];
@@ -395,9 +398,10 @@ describe("validateImportedRecord — mixed batch simulation", () => {
         valid.push(result.record.id);
       } else {
         // Extract id from the raw object for logging (may be absent/invalid).
-        const id = (raw && typeof raw === "object" && "id" in raw)
-          ? String((raw as Record<string, unknown>).id)
-          : "(unknown)";
+        const id =
+          raw && typeof raw === "object" && "id" in raw
+            ? String((raw as Record<string, unknown>).id)
+            : "(unknown)";
         rejected.push({ id, reason: result.reason });
       }
     }

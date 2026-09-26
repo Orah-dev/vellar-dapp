@@ -227,7 +227,9 @@ export async function runSubmissionWorkerTick(deps: SubmissionWorkerDeps): Promi
           const result = await deps.submitter.submit(recordData.signedXdr);
           transactionHash = result.hash;
           submissionSuccess = true;
-          log.info(`[SubmissionWorker] Successfully submitted ${transactionId}, hash: ${result.hash}`);
+          log.info(
+            `[SubmissionWorker] Successfully submitted ${transactionId}, hash: ${result.hash}`,
+          );
           metrics.submissionResult("succeeded", Date.now() - startTime);
         } catch (err) {
           submissionError = err;

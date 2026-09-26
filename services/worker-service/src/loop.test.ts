@@ -244,16 +244,40 @@ describe("startWorkerLoop & drain", () => {
     const resolver = createStaticArtifactResolver({ [C1]: built.wasmHash });
     store.submit("r1", job(C1));
 
+    // Hold the build open so the job is genuinely in flight when drain starts.
+    let buildStarted!: () => void;
+    const started = new Promise<void>((r) => (buildStarted = r));
+    let releaseBuild!: () => void;
+    const release = new Promise<void>((r) => (releaseBuild = r));
+    const executor: BuildExecutor = {
+      async build(input) {
+        buildStarted();
+        await release;
+        return stubBuildExecutor().build(input);
+      },
+    };
+
     const { startWorkerLoop } = await import("./loop");
     const loop = startWorkerLoop({
       store,
-      executor: stubBuildExecutor(),
+      executor,
       resolver,
       idleDelayMs: 100,
       busyDelayMs: 10,
     });
 
-    const drained = await loop.drain(5000);
+    await started;
+    expect(loop.getInFlightCount()).toBe(1);
+    const draining = loop.drain(5000);
+    // drain must not resolve while the build is still running
+    const early = await Promise.race([
+      draining,
+      new Promise((r) => setTimeout(() => r("pending"), 50)),
+    ]);
+    expect(early).toBe("pending");
+    releaseBuild();
+
+    const drained = await draining;
     expect(drained).toBe(true);
     expect(loop.getInFlightCount()).toBe(0);
     expect(store.get("r1")?.status).toBe("verified");

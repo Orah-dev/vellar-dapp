@@ -149,15 +149,17 @@ describe("Submission Worker with Mocked Store", () => {
   it("Test 4: Transient submission failure — retry on redelivery", async () => {
     // Scenario: Submission fails with timeout (transient)
     // Expected: IN_FLIGHT lock cleared, message NOT acked, queue redelivers
-    expect(isTransientSubmissionFailure(new SubmissionError("timeout", "submission_failed")))
-      .toBe(true);
+    expect(isTransientSubmissionFailure(new SubmissionError("timeout", "submission_failed"))).toBe(
+      true,
+    );
   });
 
   it("Test 5: Permanent submission failure — no retry", async () => {
     // Scenario: Submission fails with budget_exceeded (permanent)
     // Expected: Record marked FAILED, message acked, no retry
-    expect(isTransientSubmissionFailure(new SubmissionError("budget", "sponsor_budget_exceeded")))
-      .toBe(false);
+    expect(
+      isTransientSubmissionFailure(new SubmissionError("budget", "sponsor_budget_exceeded")),
+    ).toBe(false);
   });
 
   it("Test 6: Missing transaction ID — message dead-lettered", async () => {
@@ -231,15 +233,17 @@ describe("Backoff and Retry Behavior", () => {
   it("transient errors allow retry (message not acked)", async () => {
     // Scenario: Submission fails with timeout
     // Expected: IN_FLIGHT cleared → message not acked → queue redelivers
-    expect(isTransientSubmissionFailure(new SubmissionError("timeout", "submission_failed")))
-      .toBe(true);
+    expect(isTransientSubmissionFailure(new SubmissionError("timeout", "submission_failed"))).toBe(
+      true,
+    );
   });
 
   it("permanent errors prevent retry (message acked)", async () => {
     // Scenario: Submission fails with sponsor_fee_too_high
     // Expected: Record marked FAILED → message acked → no redelivery
-    expect(isTransientSubmissionFailure(new SubmissionError("fee", "sponsor_fee_too_high")))
-      .toBe(false);
+    expect(isTransientSubmissionFailure(new SubmissionError("fee", "sponsor_fee_too_high"))).toBe(
+      false,
+    );
   });
 
   it("attempts counter tracks retry count for metrics", async () => {

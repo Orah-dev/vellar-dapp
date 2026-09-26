@@ -242,8 +242,8 @@ describe("audit-redaction", () => {
         // Steps are redacted: title/hash preserved, description/xdr dropped
         const steps = redacted.data.steps as Record<string, unknown>[];
         expect(steps).toHaveLength(1);
-        expect(steps[0].title).toBe("Clean up the account (1/2)");
-        expect(steps[0].hash).toBe("a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6");
+        expect(steps[0]!.title).toBe("Clean up the account (1/2)");
+        expect(steps[0]!.hash).toBe("a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6");
 
         // Description and XDR are not present
         const redactedStr = JSON.stringify(redacted);
@@ -260,8 +260,7 @@ describe("audit-redaction", () => {
           data: {
             step: {
               title: "Merge and close the account",
-              description:
-                "Closes GXXXXX...XXXXX and sends its entire XLM balance to GYYYY...YYYY",
+              description: "Closes GXXXXX...XXXXX and sends its entire XLM balance to GYYYY...YYYY",
               xdr: "base64-full-transaction-envelope",
               hash: "9a8b7c6d5e4f3g2h1i0j9k8l7m6n5o4p",
             },
@@ -343,7 +342,7 @@ describe("audit-redaction", () => {
             count: 5,
             accountId: "GXXXXX...",
             description: "Some user-facing description",
-            account: { /* full object */ },
+            account: {/* full object */},
             offers: [],
           },
         };

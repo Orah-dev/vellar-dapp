@@ -249,7 +249,12 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
 
     await wallets.insert({ keyId, contractId, network, createdAt: now().toISOString() });
     const session = await openSession(contractId, network);
-    await audit.record("wallet.created", { contractId, network, txHash: hash, correlationId: request.correlationId });
+    await audit.record("wallet.created", {
+      contractId,
+      network,
+      txHash: hash,
+      correlationId: request.correlationId,
+    });
     recordOutcome(domainMetrics.walletCreated, "wallet-service", "success", network);
     return reply.code(201).send({ contractId, sessionId: session.id, txHash: hash });
   });
@@ -280,7 +285,8 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
         .header("retry-after", Math.ceil((record.resetAt - currentTime) / 1000))
         .send({
           error: "rate_limited",
-          message: "Too many authentication attempts for this account or IP. Please try again later.",
+          message:
+            "Too many authentication attempts for this account or IP. Please try again later.",
         });
     }
 
@@ -291,7 +297,11 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     }
 
     const session = await openSession(wallet.contractId, network);
-    await audit.record("wallet.connected", { contractId: wallet.contractId, network, correlationId: request.correlationId });
+    await audit.record("wallet.connected", {
+      contractId: wallet.contractId,
+      network,
+      correlationId: request.correlationId,
+    });
     recordOutcome(domainMetrics.walletPasskeyAuth, "wallet-service", "success", network);
     return reply.send({ contractId: wallet.contractId, sessionId: session.id });
   });
@@ -332,7 +342,11 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
 
     try {
       const { hash } = await submitter.submit(signedXdr);
-      await audit.record("tx.submitted", { network, txHash: hash, correlationId: request.correlationId });
+      await audit.record("tx.submitted", {
+        network,
+        txHash: hash,
+        correlationId: request.correlationId,
+      });
       recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "success", network);
       return reply.send({ hash });
     } catch (err) {
@@ -448,7 +462,7 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
 
     const schema = z.object({
       policyId: z.string().min(1),
-      rules: z.record(z.unknown()).optional(),
+      rules: z.record(z.string(), z.unknown()).optional(),
     });
     const parsed = schema.safeParse(request.body);
     if (!parsed.success) {

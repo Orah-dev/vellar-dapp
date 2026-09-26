@@ -42,15 +42,15 @@ const result = await retryWithBackoff(fn, options);
 
 **Parameters**
 
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `maxAttempts` | `number` | `4` | Total attempts (including the first call). Must be ≥ 1. |
-| `baseDelayMs` | `number` | `200` | Base delay in ms. The ceiling for attempt N is `baseDelayMs × 2^N`. |
-| `maxDelayMs` | `number` | `10 000` | Hard ceiling on any single sleep interval. |
-| `noJitter` | `boolean` | `false` | When `true`, uses the full computed ceiling rather than a random value in `[0, cap]`. Only disable for deterministic tests. |
-| `isRetryable` | `(err: unknown) => boolean` | `() => true` | Return `false` to surface an error immediately without further retries (e.g. 4xx HTTP errors). |
-| `signal` | `AbortSignal` | — | Cancels pending retries. Throws `RetryAbortedError` when fired. |
-| `sleep` | `(ms: number) => Promise<void>` | `setTimeout`-based | Override the sleep implementation (tests pass a zero-delay stub). |
+| Option        | Type                            | Default            | Description                                                                                                                 |
+| ------------- | ------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `maxAttempts` | `number`                        | `4`                | Total attempts (including the first call). Must be ≥ 1.                                                                     |
+| `baseDelayMs` | `number`                        | `200`              | Base delay in ms. The ceiling for attempt N is `baseDelayMs × 2^N`.                                                         |
+| `maxDelayMs`  | `number`                        | `10 000`           | Hard ceiling on any single sleep interval.                                                                                  |
+| `noJitter`    | `boolean`                       | `false`            | When `true`, uses the full computed ceiling rather than a random value in `[0, cap]`. Only disable for deterministic tests. |
+| `isRetryable` | `(err: unknown) => boolean`     | `() => true`       | Return `false` to surface an error immediately without further retries (e.g. 4xx HTTP errors).                              |
+| `signal`      | `AbortSignal`                   | —                  | Cancels pending retries. Throws `RetryAbortedError` when fired.                                                             |
+| `sleep`       | `(ms: number) => Promise<void>` | `setTimeout`-based | Override the sleep implementation (tests pass a zero-delay stub).                                                           |
 
 **Thrown errors**
 
@@ -150,8 +150,10 @@ Shared backend service bootstrap: health route, metrics exposition, correlation 
 All Vellar services adhere to a unified Prometheus metric naming structure to ensure consistency across dashboards, alerts, and log aggregators:
 
 ```
+
 vela_<subsystem>_<metric_name>_<unit_or_type>
-```
+
+````
 
 ### Components
 
@@ -198,7 +200,7 @@ if (!result.valid) {
 // Lint all registered metrics in a test suite
 const { valid, violations } = lintMetricNames(metricsRegistry());
 expect(valid).toBe(true);
-```
+````
 
 ---
 

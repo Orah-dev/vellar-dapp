@@ -7,6 +7,7 @@ This document details the load testing suite for transaction submission under bu
 The transaction submission load test harness (`contrib/load-test-submission.ts`) evaluates system behavior under increasing levels of concurrency (e.g. 1, 5, 10, 25, 50 concurrent submitters).
 
 It measures key performance indicators:
+
 - **Throughput**: Requests Per Second (RPS)
 - **Latency Percentiles**: p50, p95, and p99 latency in milliseconds
 - **Error Rates**: Percentage of failed submissions due to RPC rate limits or network congestion
@@ -28,7 +29,7 @@ npx tsx contrib/load-test-submission.ts
 
 ## Continuous Integration (CI)
 
-The load test is wired into the main CI pipeline (`.github/workflows/ci.yml`). Every PR and push to `main` runs the load test suite to ensure performance regressions or burst capacity drops are caught prior to deployment.
+Not currently run in CI. The harness (`contrib/load-test-submission.ts`) and the root `test:load` script were removed in `44d8ce1`, so the CI step that called it was removed too (see `docs/ci-baseline.md`). Restore the harness before re-adding the step.
 
 ## Observed Limits & Bottlenecks
 
