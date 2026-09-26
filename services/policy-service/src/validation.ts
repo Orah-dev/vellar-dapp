@@ -55,9 +55,10 @@ export const deployInstanceBodySchema = z.object({
  * Returns { valid: true } if the policy is contract-enforced and has constructorArgs.
  * Returns { valid: false, error: "..." } otherwise.
  */
-export function validatePolicyForDeployment(
-  record: PolicyRecord,
-): { valid: boolean; error?: string } {
+export function validatePolicyForDeployment(record: PolicyRecord): {
+  valid: boolean;
+  error?: string;
+} {
   const enforcement = record.manifest.enforcement;
   if (enforcement.kind !== "policy-contract") {
     return {
@@ -81,9 +82,7 @@ export function validatePolicyForDeployment(
  * Returns { valid: true } if record.instance is set.
  * Returns { valid: false, error: "..." } otherwise.
  */
-export function validatePolicyInstance(
-  record: PolicyRecord,
-): { valid: boolean; error?: string } {
+export function validatePolicyInstance(record: PolicyRecord): { valid: boolean; error?: string } {
   if (!record.instance) {
     return {
       valid: false,

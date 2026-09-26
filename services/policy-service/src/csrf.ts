@@ -97,9 +97,7 @@ export function createCsrfPreHandler(options: CsrfOptions) {
       return reply.code(403).send({
         error: "csrf_token_invalid",
         message:
-          result.reason === "expired"
-            ? "CSRF token has expired"
-            : "Invalid or tampered CSRF token",
+          result.reason === "expired" ? "CSRF token has expired" : "Invalid or tampered CSRF token",
         reason: result.reason,
       });
     }
