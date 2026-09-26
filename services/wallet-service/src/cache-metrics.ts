@@ -15,8 +15,7 @@
  * Low cardinality: resource label constrained to allowlist to prevent cardinality explosion.
  */
 
-import { Counter } from "prom-client";
-import { metricsRegistry } from "@vellar/service-kit";
+import { Counter, metricsRegistry } from "@vellar/service-kit";
 
 const ALLOWED_RESOURCES = ["balance", "nonce", "account", "tx-history"] as const;
 export type CacheResourceType = (typeof ALLOWED_RESOURCES)[number];
@@ -103,6 +102,12 @@ export function initCacheMetrics(): void {
  * it is silently dropped (best-effort) so cache operations always succeed.
  */
 export function createCacheMetricsWrapper(cache: CacheOperation): CacheOperation {
+  // Emit a zero series per allowed resource up front so hit/miss ratios and
+  // rate() queries exist before the first cache access.
+  for (const resource of ALLOWED_RESOURCES) {
+    cacheHits.inc({ resource }, 0);
+    cacheMisses.inc({ resource }, 0);
+  }
   return {
     async get<T = unknown>(resource: CacheResourceType, key: string): Promise<CacheGetResult<T>> {
       const result = await cache.get<T>(resource, key);
@@ -125,11 +130,7 @@ export function createCacheMetricsWrapper(cache: CacheOperation): CacheOperation
       return result;
     },
 
-    async set<T = unknown>(
-      resource: CacheResourceType,
-      key: string,
-      value: T,
-    ): Promise<void> {
+    async set<T = unknown>(resource: CacheResourceType, key: string, value: T): Promise<void> {
       return cache.set(resource, key, value);
     },
 

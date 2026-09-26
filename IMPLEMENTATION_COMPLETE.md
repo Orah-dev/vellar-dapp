@@ -16,9 +16,11 @@ Successfully implemented a comprehensive, safe, and idempotent backfill solution
 ## Deliverables
 
 ### 1. Backfill Script
+
 **File:** `services/verification-service/scripts/backfill-metadata.ts` (500+ lines)
 
 **Features:**
+
 - ✅ Identifies rows with status='verified' and missing deployedHash
 - ✅ Fetches on-chain wasm hash from Stellar RPC (via resolveDeployedHash)
 - ✅ Batch processing (10 records per batch)
@@ -30,6 +32,7 @@ Successfully implemented a comprehensive, safe, and idempotent backfill solution
 - ✅ Exit codes (0=success, 1=partial failure, 2=fatal error)
 
 **Usage:**
+
 ```bash
 # Dry-run (default): reports affected rows without writing
 tsx services/verification-service/scripts/backfill-metadata.ts
@@ -42,9 +45,11 @@ tsx services/verification-service/scripts/backfill-metadata.ts --confirm --verbo
 ```
 
 ### 2. Comprehensive Tests
+
 **File:** `services/verification-service/scripts/backfill-metadata.test.ts` (450+ lines)
 
 **Test Coverage:**
+
 1. ✅ Correct backfill of missing deployedHash (verifies exact value)
 2. ✅ Skip already-populated fields (idempotency)
 3. ✅ Graceful handling of fetch failures (continued, per-record)
@@ -54,14 +59,17 @@ tsx services/verification-service/scripts/backfill-metadata.ts --confirm --verbo
 7. ✅ Concurrent backfill safety (second process detects updates)
 
 **Test Framework:**
+
 - Database fixtures (real verification_records table)
 - Mock RPC resolver (controlled test data)
 - 7 comprehensive test cases
 
 ### 3. Documentation
+
 **File:** `docs/decisions.md` (appended 250+ lines)
 
 **Contents:**
+
 - Context: Why metadata was missing
 - Decision: Safe, idempotent backfill approach
 - Rationale: Blockchain as source of truth, reuse existing logic
@@ -75,6 +83,7 @@ tsx services/verification-service/scripts/backfill-metadata.ts --confirm --verbo
 ## Verification Against Issue Requirements
 
 ### ✅ Before Writing Code (All 5 items completed)
+
 1. Read verification_requests schema and identify missing fields
 2. Determine metadata source (Stellar RPC)
 3. Check for existing scripts/patterns (found Drizzle migrations)
@@ -82,6 +91,7 @@ tsx services/verification-service/scripts/backfill-metadata.ts --confirm --verbo
 5. Summarize plan (comprehensive, executed as planned)
 
 ### ✅ Required Behavior (All 6 items implemented)
+
 1. Backfill script selects rows and fetches metadata
 2. Reuses existing resolver logic (no reimplementation)
 3. Populates missing deployedHash field
@@ -90,10 +100,12 @@ tsx services/verification-service/scripts/backfill-metadata.ts --confirm --verbo
 6. Batches and rate-limits (10/batch, 1s delay, 3x retry)
 
 ### ✅ Dry-Run Mode (Both features)
+
 1. Reports affected row count and preview
 2. Requires --confirm flag to write (safe default)
 
 ### ✅ Tests Required (All 5 test types)
+
 1. Fixture-based tests: 7 comprehensive cases
 2. Correct backfill verification: Exact values asserted
 3. Skip already-populated: Idempotency verified
@@ -101,12 +113,14 @@ tsx services/verification-service/scripts/backfill-metadata.ts --confirm --verbo
 5. Idempotency & dry-run: Both verified
 
 ### ✅ Constraints (All 4 adhered to)
+
 1. Never overwrites populated fields: Check-before-write
 2. No schema changes needed: Reuses existing field
 3. Scoped to backfill: No generic framework built
 4. Follows code style: TypeScript/Drizzle patterns
 
 ### ✅ Acceptance Criteria (All 4 met)
+
 1. Backfill script fetches and populates metadata
 2. Dry-run mode reports affected row count
 3. Tests verify backfilled values against fixtures
@@ -117,24 +131,28 @@ tsx services/verification-service/scripts/backfill-metadata.ts --confirm --verbo
 ## Code Quality
 
 ### TypeScript & Patterns
+
 - ✅ Proper type definitions (VerificationRecordInternal, BackfillStats)
 - ✅ Error handling with specific error types
 - ✅ Follows Drizzle ORM conventions
 - ✅ Consistent with wallet-service/worker-service patterns
 
 ### Error Handling
+
 - ✅ Per-record error catching (continues on failure)
 - ✅ Retry logic with exponential backoff
 - ✅ Timeout protection (30s per record)
 - ✅ Clear error messages (record ID, contract ID, error details)
 
 ### Testing
+
 - ✅ Database integration tests (real verification_records table)
 - ✅ Mock RPC resolver for controlled test data
 - ✅ 7 test cases covering success/fail/edge cases
 - ✅ Concurrent safety verification
 
 ### Safety
+
 - ✅ Check-before-update prevents overwrites
 - ✅ Idempotent: safe to re-run multiple times
 - ✅ Handles concurrent updates gracefully
@@ -164,9 +182,10 @@ tsx services/verification-service/scripts/backfill-metadata.ts --confirm --verbo
 ✅ Safety measures in place  
 ✅ Dry-run mode prevents accidents  
 ✅ Error handling graceful and clear  
-✅ Idempotent design allows safe re-running  
+✅ Idempotent design allows safe re-running
 
 **Next Steps:**
+
 1. Run final checks (lint, typecheck, build)
 2. Stage files: `git add -A`
 3. Commit: `git commit -m "chore(data): backfill verification_requests contract metadata"`
@@ -177,11 +196,10 @@ tsx services/verification-service/scripts/backfill-metadata.ts --confirm --verbo
 
 ## Files Summary
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `services/verification-service/scripts/backfill-metadata.ts` | 500+ | Backfill script with dry-run, batching, rate-limiting, error handling |
-| `services/verification-service/scripts/backfill-metadata.test.ts` | 450+ | 7 comprehensive tests covering all scenarios |
-| `docs/decisions.md` | 250+ | Decision record with context, rationale, examples, compliance |
-| `VERIFICATION_CHECKLIST.md` | 200+ | Detailed verification against all 44 requirements |
-| `IMPLEMENTATION_COMPLETE.md` | (this file) | Executive summary and delivery status |
-
+| File                                                              | Lines       | Purpose                                                               |
+| ----------------------------------------------------------------- | ----------- | --------------------------------------------------------------------- |
+| `services/verification-service/scripts/backfill-metadata.ts`      | 500+        | Backfill script with dry-run, batching, rate-limiting, error handling |
+| `services/verification-service/scripts/backfill-metadata.test.ts` | 450+        | 7 comprehensive tests covering all scenarios                          |
+| `docs/decisions.md`                                               | 250+        | Decision record with context, rationale, examples, compliance         |
+| `VERIFICATION_CHECKLIST.md`                                       | 200+        | Detailed verification against all 44 requirements                     |
+| `IMPLEMENTATION_COMPLETE.md`                                      | (this file) | Executive summary and delivery status                                 |

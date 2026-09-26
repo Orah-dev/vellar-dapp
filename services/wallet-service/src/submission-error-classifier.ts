@@ -127,9 +127,7 @@ export interface SubmissionErrorClassificationResult {
 /**
  * Classifies an error with detailed reasoning for logs/metrics.
  */
-export function classifySubmissionError(
-  error: unknown,
-): SubmissionErrorClassificationResult {
+export function classifySubmissionError(error: unknown): SubmissionErrorClassificationResult {
   if (error instanceof SubmissionError) {
     const isTransient = isTransientSubmissionFailure(error);
     return {

@@ -68,16 +68,11 @@ export function getSupportedTokens(network: Network): RegistryToken[] {
 /**
  * Find a token in the registry by contract address or symbol.
  */
-export function findToken(
-  network: Network,
-  identifier: string,
-): RegistryToken | undefined {
+export function findToken(network: Network, identifier: string): RegistryToken | undefined {
   const tokens = getSupportedTokens(network);
   const normalized = identifier.trim().toLowerCase();
   return tokens.find(
-    (t) =>
-      t.contractId.toLowerCase() === normalized ||
-      t.symbol.toLowerCase() === normalized,
+    (t) => t.contractId.toLowerCase() === normalized || t.symbol.toLowerCase() === normalized,
   );
 }
 
@@ -119,10 +114,7 @@ export function formatAmountWithDecimals(
 /**
  * Parse a decimal string into raw integer units for a specific token decimal precision.
  */
-export function parseAmountWithDecimals(
-  value: string,
-  decimals: number,
-): bigint {
+export function parseAmountWithDecimals(value: string, decimals: number): bigint {
   if (decimals < 0 || decimals > 36) {
     throw new Error(`Invalid decimals: ${decimals}`);
   }

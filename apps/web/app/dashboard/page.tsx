@@ -133,7 +133,11 @@ export default function Dashboard() {
                   <span role="alert" className="lpa-bad text-[13px]">
                     Couldn&apos;t load balances.
                   </span>
-                  <LpActionButton variant="outline" size="sm" onClick={() => void balances.refetch()}>
+                  <LpActionButton
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void balances.refetch()}
+                  >
                     Retry
                   </LpActionButton>
                 </div>

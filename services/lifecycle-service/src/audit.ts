@@ -74,9 +74,10 @@ export function createNoOpAuditLog(): AuditLog {
  * @param implementation - Which implementation to use ("memory" or "noop")
  * @returns Tuple of [redactionSalt, auditLog]
  */
-export function initializeAuditLog(implementation: "memory" | "noop" = "memory"): [string, AuditLog] {
+export function initializeAuditLog(
+  implementation: "memory" | "noop" = "memory",
+): [string, AuditLog] {
   const salt = generateRedactionSalt();
-  const auditLog =
-    implementation === "memory" ? createMemoryAuditLog(salt) : createNoOpAuditLog();
+  const auditLog = implementation === "memory" ? createMemoryAuditLog(salt) : createNoOpAuditLog();
   return [salt, auditLog];
 }

@@ -1,0 +1,50 @@
+name: Hermetic build
+
+# #420: runs the real verification sandbox — the toolchain image, the guarded
+# Cargo.lock pre-fetch and `docker run --network=none` — against fixtures that
+# try to reach the network, fail to resolve, and build a real Soroban contract
+# to its deployed hash. Unit tests in ci.yml cover the wiring; this proves the
+# isolation itself. Path-filtered because the image build + Soroban compile
+# take ~15 minutes.
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "services/worker-service/**"
+      - "infra/docker/verification-builder.Dockerfile"
+      - "contracts/**"
+      - ".github/workflows/hermetic-build.yml"
+  pull_request:
+    paths:
+      - "services/worker-service/**"
+      - "infra/docker/verification-builder.Dockerfile"
+      - "contracts/**"
+      - ".github/workflows/hermetic-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  hermetic-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build toolchain image
+        run: docker build -f infra/docker/verification-builder.Dockerfile -t vela-verify:1.94.0 infra/docker
+
+      - name: Offline build isolation tests
+        run: pnpm --filter @vellar/worker-service exec vitest run src/hermetic-build.integration.test.ts
+        env:
+          VERIFY_BUILD_IMAGE: vela-verify:1.94.0

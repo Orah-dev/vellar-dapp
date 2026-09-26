@@ -1,0 +1,16 @@
+[package]
+name = "vellar-hermetic-unresolvable"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+panic = "abort"
+
+[dependencies]
+vellar-hermetic-no-such-crate = "=0.0.1"

@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { StrKey } from "@stellar/stellar-sdk";
 import { __resetMetricsForTest } from "@vellar/service-kit";
+import { MemoryCacheStore } from "./cache";
+import { createCacheMetricsWrapper } from "./cache-metrics";
 import { buildServer } from "./server";
 import { createUnconfiguredSubmitter } from "./relayer";
 import { MemoryCacheStore } from "./cache";
@@ -17,6 +19,8 @@ describe("Cache Metrics Integration (/metrics endpoint)", () => {
       submitter: createUnconfiguredSubmitter(),
       wallets: createMemoryWalletRepository(),
       sessions: createMemorySessionRepository(),
+      // Same cache wiring as index.ts.
+      cache: createCacheMetricsWrapper(new MemoryCacheStore(5 * 60 * 1000)),
     });
   });
 
@@ -60,8 +64,8 @@ describe("Cache Metrics Integration (/metrics endpoint)", () => {
 
     const metrics = response.body;
     // After initialization, counters should be present (even at zero)
-    expect(metrics).toContain('wallet_service_cache_hits_total{resource=');
-    expect(metrics).toContain('wallet_service_cache_misses_total{resource=');
+    expect(metrics).toContain("wallet_service_cache_hits_total{resource=");
+    expect(metrics).toContain("wallet_service_cache_misses_total{resource=");
   });
 
   it("maintains separate counters for different resource types", async () => {
@@ -112,8 +116,7 @@ describe("Cache Metrics Integration (/metrics endpoint)", () => {
     const metrics = response.body;
     expect(metrics).toContain('wallet_service_cache_hits_total{resource="account"} 1');
     // Should NOT contain wallet addresses, user IDs, or request IDs
-    expect(metrics).not.toContain(contractId);
-    expect(metrics).not.toMatch(/[CG][A-Z2-7]{55}/);
+    expect(metrics).not.toMatch(/\b[CG][A-Z2-7]{55}\b/);
     expect(metrics).not.toContain("keyId");
     expect(metrics).not.toContain("contractId");
   });

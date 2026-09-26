@@ -547,6 +547,23 @@ describe("POST /wallet/submit funding-path scoping (C1/H1/V2)", () => {
   });
 });
 
+async function createAndConnect(server: FastifyInstance) {
+  const create = await server.inject({
+    method: "POST",
+    url: "/wallet/create",
+    payload: createBody,
+  });
+  const connect = await server.inject({
+    method: "POST",
+    url: "/wallet/connect",
+    payload: { keyId: createBody.keyId, network: "testnet" },
+  });
+  return {
+    createSessionId: create.json().sessionId as string,
+    connectSessionId: connect.json().sessionId as string,
+  };
+}
+
 describe("session management (§5.1) — bearer capability (RA-3/M1)", () => {
   const bearer = (id: string) => ({ authorization: `Bearer ${id}` });
 

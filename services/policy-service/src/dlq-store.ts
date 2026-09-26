@@ -1,9 +1,9 @@
 /**
  * Dead-Letter Queue (DLQ) persistence layer for policy deployment jobs.
- * 
+ *
  * Stores policy deployment jobs that have exceeded maxRetries, with immutable
  * audit trails and support for admin requeue operations.
- * 
+ *
  * Key invariants:
  * - DLQ entries are immutable except for admin metadata (requeue_count, archived, requeue_in_progress)
  * - Each entry has a tamper-resistant audit trail (timestamps, actor, tx id)
@@ -44,7 +44,12 @@ export interface DLQStore {
    * Insert a new DLQ entry atomically (called when job exceeds maxRetries).
    * Must be called within a transaction to ensure atomicity with job status update.
    */
-  insert(record: Omit<DLQRecord, "id" | "created_at" | "updated_at">): Promise<DLQRecord>;
+  insert(
+    record: Omit<
+      DLQRecord,
+      "id" | "created_at" | "updated_at" | "archived" | "requeue_count" | "requeue_in_progress"
+    >,
+  ): Promise<DLQRecord>;
 
   /**
    * Find a DLQ entry by id. Returns undefined if not found or archived.
@@ -72,7 +77,17 @@ export interface DLQStore {
    */
   update(
     id: string,
-    updates: Partial<Pick<DLQRecord, "requeue_count" | "archived" | "requeue_in_progress" | "last_requeued_at" | "last_requeued_by" | "updated_at">>,
+    updates: Partial<
+      Pick<
+        DLQRecord,
+        | "requeue_count"
+        | "archived"
+        | "requeue_in_progress"
+        | "last_requeued_at"
+        | "last_requeued_by"
+        | "updated_at"
+      >
+    >,
   ): Promise<void>;
 
   /**
@@ -94,7 +109,9 @@ export function createMemoryDLQStore(): DLQStore {
   const auditLog: AuditEvent[] = [];
 
   function generateId(): string {
-    return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    return (
+      Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
+    );
   }
 
   return {
@@ -123,25 +140,25 @@ export function createMemoryDLQStore(): DLQStore {
 
     async list(options) {
       let entries = Array.from(records.values());
-      
+
       if (options?.jobType) {
         entries = entries.filter((e) => e.job_type === options.jobType);
       }
-      
+
       if (!options?.includeArchived) {
         entries = entries.filter((e) => !e.archived);
       }
-      
+
       const total = entries.length;
-      
+
       if (options?.offset) {
         entries = entries.slice(options.offset);
       }
-      
+
       if (options?.limit) {
         entries = entries.slice(0, options.limit);
       }
-      
+
       return { entries, total };
     },
 
@@ -152,7 +169,7 @@ export function createMemoryDLQStore(): DLQStore {
     async update(id, updates) {
       const record = records.get(id);
       if (!record) throw new Error(`DLQ entry not found: ${id}`);
-      
+
       const now = new Date().toISOString();
       Object.assign(record, updates, { updated_at: now });
     },
@@ -183,7 +200,7 @@ export function createMemoryDLQStore(): DLQStore {
  */
 export function summarizeError(error: unknown, maxLength = 200): string {
   let message = "";
-  
+
   if (error instanceof Error) {
     message = error.message;
   } else if (typeof error === "string") {
@@ -191,7 +208,7 @@ export function summarizeError(error: unknown, maxLength = 200): string {
   } else {
     message = String(error);
   }
-  
+
   // Redact common PII patterns
   message = message
     .replace(/0x[a-fA-F0-9]{40,}/g, "0x[address]")
@@ -199,10 +216,10 @@ export function summarizeError(error: unknown, maxLength = 200): string {
     .replace(/G[A-Z2-7]{55}/g, "[account]")
     .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "[ip]")
     .replace(/:[0-9a-f]{32,64}/gi, ":[key]");
-  
+
   if (message.length > maxLength) {
     message = message.substring(0, maxLength - 3) + "...";
   }
-  
+
   return message;
 }

@@ -108,7 +108,7 @@ describe("Secrets Audit: Issue #307", () => {
     });
 
     it("should redact password= patterns", () => {
-      const str = 'Config: password=my_secret_password, user=admin';
+      const str = "Config: password=my_secret_password, user=admin";
       const redacted = redactString(str);
 
       expect(redacted).toContain("password=[REDACTED]");
@@ -116,7 +116,7 @@ describe("Secrets Audit: Issue #307", () => {
     });
 
     it("should redact secret= patterns", () => {
-      const str = 'Setup: secret=my_api_secret, environment=prod';
+      const str = "Setup: secret=my_api_secret, environment=prod";
       const redacted = redactString(str);
 
       expect(redacted).toContain("secret=[REDACTED]");
@@ -141,7 +141,7 @@ describe("Secrets Audit: Issue #307", () => {
       });
 
       expect(consoleErrorSpy).toHaveBeenCalled();
-      const call = consoleErrorSpy.mock.calls[0];
+      const call = consoleErrorSpy.mock.calls[0]!;
       expect(call[0]).toBe("Connection failed");
       expect(JSON.stringify(call[1])).not.toContain("user:pass");
       expect(JSON.stringify(call[1])).toContain("[REDACTED]");
@@ -278,9 +278,7 @@ describe("Secrets Audit: Issue #307", () => {
       });
 
       // Check that the secret was not logged
-      const allCalls = consoleErrorSpy.mock.calls
-        .map((call) => JSON.stringify(call))
-        .join("");
+      const allCalls = consoleErrorSpy.mock.calls.map((call) => JSON.stringify(call)).join("");
 
       expect(allCalls).not.toContain("securePass123");
       expect(allCalls).not.toContain("admin:");
@@ -292,8 +290,7 @@ describe("Secrets Audit: Issue #307", () => {
     it("should not log ATTESTOR_SECRET_KEY in error output", () => {
       const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-      process.env.ATTESTOR_SECRET_KEY =
-        "SAFRELPDOBRWLJZLVGSOOWBSVEUOMTAPXEMJOLU7AUJJS4Q6ZQ2QBTRY";
+      process.env.ATTESTOR_SECRET_KEY = "SAFRELPDOBRWLJZLVGSOOWBSVEUOMTAPXEMJOLU7AUJJS4Q6ZQ2QBTRY";
 
       const logger = createSafeLogger();
       logger.error("Attestor failed", {
@@ -301,9 +298,7 @@ describe("Secrets Audit: Issue #307", () => {
         operation: "sign",
       });
 
-      const allCalls = consoleErrorSpy.mock.calls
-        .map((call) => JSON.stringify(call))
-        .join("");
+      const allCalls = consoleErrorSpy.mock.calls.map((call) => JSON.stringify(call)).join("");
 
       expect(allCalls).not.toContain("SAFRELPDOBRWLJZLVGSOOWBSVEUOMTAPXEMJOLU");
       expect(allCalls).toContain("[REDACTED]");
@@ -320,9 +315,7 @@ describe("Secrets Audit: Issue #307", () => {
       const logger = createSafeLogger();
       logger.error("Operation failed", err);
 
-      const allCalls = consoleErrorSpy.mock.calls
-        .map((call) => JSON.stringify(call))
-        .join("");
+      const allCalls = consoleErrorSpy.mock.calls.map((call) => JSON.stringify(call)).join("");
 
       expect(allCalls).not.toContain("sk_test_abc123xyz789");
       expect(allCalls).toContain("[REDACTED]");

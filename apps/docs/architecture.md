@@ -29,8 +29,9 @@ never duplicated across surfaces.
 | `@vellar/passkey`          | implemented | WebAuthn support detection + error normalization                                                                                                                                         |
 | `@vellar/provider-sdk`     | implemented | dApp provider protocol (zod-validated), page provider, per-origin permissions                                                                                                            |
 | `@vellar/service-kit`      | implemented | Shared backend bootstrap — health route, startup/shutdown, safe DB connect                                                                                                               |
-| `@vellar/verification-sdk` | implemented | Verification client helpers and TrustBadge integration |
-| `@vellar/ui`               | implemented | Shared UI primitives (TrustBadge) |
+| `@vellar/verification-sdk` | implemented | Verification client helpers and TrustBadge integration                                                                                                                                   |
+| `@vellar/ui`               | implemented | Shared UI primitives (TrustBadge)                                                                                                                                                        |
+
 > The **stub** packages are intentional placeholders. Their functionality
 > exists today inside the apps and services; extracting it into these shared
 > packages is planned work, not missing behavior.

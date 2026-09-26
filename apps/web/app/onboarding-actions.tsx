@@ -84,10 +84,7 @@ export function OnboardingActions({
       } else {
         const failureReason = walletErrorMessage(err);
         if (kind === "create") {
-          walletCreationEvents.creationFailed(
-            { failureReason, step: "passkey" },
-            context,
-          );
+          walletCreationEvents.creationFailed({ failureReason, step: "passkey" }, context);
         } else {
           walletSignInEvents.signinFailed({ failureReason }, context);
         }

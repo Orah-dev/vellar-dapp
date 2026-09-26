@@ -79,7 +79,10 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
   ];
   const corsOriginRaw = options.corsOrigin ?? process.env.CORS_ORIGIN;
   const corsOrigins = corsOriginRaw
-    ? corsOriginRaw.split(",").map((o) => o.trim()).filter(Boolean)
+    ? corsOriginRaw
+        .split(",")
+        .map((o) => o.trim())
+        .filter(Boolean)
     : DEFAULT_ALLOWED_ORIGINS;
 
   const maxBodyBytes = options.maxBodyBytes ?? numEnv("MAX_BODY_BYTES", 1024 * 1024);

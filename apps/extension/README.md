@@ -18,6 +18,7 @@ Build-time public env (WXT inlines `WXT_PUBLIC_*` into the client bundle):
 ## Input Sanitization (#312)
 
 dApp-provided connection payloads (such as dApp names, origins, descriptions, and icon URLs) are sanitized before being processed or rendered in the popup UI:
+
 - **HTML & Script Escaping**: HTML special characters (`<`, `>`, `&`, `"`, `'`, `/`) are escaped using `escapeHtml()`.
 - **Tag Stripping**: All HTML tags (`<script>`, `<iframe>`, etc.) are stripped using `sanitizeString()`.
 - **URL Protocol Filtering**: Dangerous URI schemes (`javascript:`, `data:`, `vbscript:`) are filtered out by `sanitizeUrl()`.
@@ -27,8 +28,7 @@ dApp-provided connection payloads (such as dApp names, origins, descriptions, an
 ## Error Reporting Integration (#302)
 
 Uncaught exceptions, background worker rejections, and signing failures are automatically captured and forwarded to the centralized error reporting client via `backgroundErrorReporter`:
+
 - **Context Metadata**: Every reported error automatically embeds `extensionVersion` (from `WXT_PUBLIC_VERSION`) and `browserInfo` (`navigator.userAgent` or worker environment tag).
 - **Global Handlers**: Registered on background worker startup (`self.addEventListener('error')`, `self.addEventListener('unhandledrejection')`).
 - **Resilience**: Error delivery failures fail safely to console without interrupting service worker routing or user transaction flows.
-
-

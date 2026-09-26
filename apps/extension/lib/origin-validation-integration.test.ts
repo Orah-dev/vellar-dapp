@@ -44,22 +44,19 @@ describe("Origin Validation Facade Integration (refactor #348)", () => {
     ["https://app.example.com..", "https://app.example.com."],
   ] as const;
 
-  it.each(testVectors)(
-    "both call paths normalize %s identically",
-    (input, expectedNormalized) => {
-      // Call path 1: via permission-service facade
-      const fromPermissionService = permissionServiceNormalizeOrigin(input);
+  it.each(testVectors)("both call paths normalize %s identically", (input, expectedNormalized) => {
+    // Call path 1: via permission-service facade
+    const fromPermissionService = permissionServiceNormalizeOrigin(input);
 
-      // Call path 2: direct from provider-sdk
-      const fromProviderSdk = providerSdkNormalizeOrigin(input);
+    // Call path 2: direct from provider-sdk
+    const fromProviderSdk = providerSdkNormalizeOrigin(input);
 
-      // Both must be identical
-      expect(fromPermissionService).toBe(fromProviderSdk);
+    // Both must be identical
+    expect(fromPermissionService).toBe(fromProviderSdk);
 
-      // Both must match the expected result
-      expect(fromPermissionService).toBe(expectedNormalized);
-    },
-  );
+    // Both must match the expected result
+    expect(fromPermissionService).toBe(expectedNormalized);
+  });
 
   it("both call paths produce the same result for the dotted/dotless equivalence", () => {
     const dotted = "https://app.example.com.";

@@ -78,7 +78,7 @@ Cache metrics **do not** expose PII or high-cardinality identifiers:
 
 ```yaml
 - alert: WalletServiceHighCacheMissRate
-  expr: rate(wallet_service_cache_misses_total[5m]) > 10  # Adjust threshold based on expected traffic
+  expr: rate(wallet_service_cache_misses_total[5m]) > 10 # Adjust threshold based on expected traffic
   for: 10m
   annotations:
     summary: "High cache miss rate for wallet-service {{ $labels.resource }}"

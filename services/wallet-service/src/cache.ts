@@ -38,10 +38,7 @@ export class MemoryCacheStore implements CacheOperation {
     return Date.now() > entry.expiresAt;
   }
 
-  async get<T = unknown>(
-    resource: CacheResourceType,
-    key: string,
-  ): Promise<CacheGetResult<T>> {
+  async get<T = unknown>(resource: CacheResourceType, key: string): Promise<CacheGetResult<T>> {
     const fullKey = this.makeKey(resource, key);
     const entry = this.store.get(fullKey);
 
@@ -57,11 +54,7 @@ export class MemoryCacheStore implements CacheOperation {
     return { hit: true, value: entry.value as T };
   }
 
-  async set<T = unknown>(
-    resource: CacheResourceType,
-    key: string,
-    value: T,
-  ): Promise<void> {
+  async set<T = unknown>(resource: CacheResourceType, key: string, value: T): Promise<void> {
     const fullKey = this.makeKey(resource, key);
     this.store.set(fullKey, {
       value,

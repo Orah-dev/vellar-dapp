@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Keypair, Account, xdr } from "@stellar/stellar-sdk";
-import {
-  ThresholdKeyManager,
-  createThresholdSubmitter,
-} from "./threshold-submitter";
+import { ThresholdKeyManager, createThresholdSubmitter } from "./threshold-submitter";
 import { createAttestor } from "./attestor";
 
 describe("Threshold Attestor Submitter & Key Management (#422)", () => {
@@ -17,11 +14,7 @@ describe("Threshold Attestor Submitter & Key Management (#422)", () => {
 
   describe("ThresholdKeyManager", () => {
     it("manages N attestor keys and returns public keys", () => {
-      const km = new ThresholdKeyManager([
-        signer1.secret(),
-        signer2.secret(),
-        signer3.secret(),
-      ]);
+      const km = new ThresholdKeyManager([signer1.secret(), signer2.secret(), signer3.secret()]);
 
       expect(km.count).toBe(3);
       expect(km.getPublicKeys()).toEqual([
@@ -37,20 +30,16 @@ describe("Threshold Attestor Submitter & Key Management (#422)", () => {
     });
 
     it("signs payload with strictly ascending signer indices", () => {
-      const km = new ThresholdKeyManager([
-        signer1.secret(),
-        signer2.secret(),
-        signer3.secret(),
-      ]);
+      const km = new ThresholdKeyManager([signer1.secret(), signer2.secret(), signer3.secret()]);
 
       const payload = Buffer.alloc(32, 7);
       const sigs = km.signPayload(payload, 2);
 
       expect(sigs.length).toBe(2);
-      expect(sigs[0].signerIndex).toBe(0);
-      expect(sigs[1].signerIndex).toBe(1);
-      expect(signer1.verify(payload, sigs[0].signature)).toBe(true);
-      expect(signer2.verify(payload, sigs[1].signature)).toBe(true);
+      expect(sigs[0]!.signerIndex).toBe(0);
+      expect(sigs[1]!.signerIndex).toBe(1);
+      expect(signer1.verify(payload, sigs[0]!.signature)).toBe(true);
+      expect(signer2.verify(payload, sigs[1]!.signature)).toBe(true);
     });
 
     it("throws when requested signatures exceed configured signers", () => {
@@ -64,7 +53,9 @@ describe("Threshold Attestor Submitter & Key Management (#422)", () => {
     function setupMockServer() {
       const getAccount = vi.fn().mockResolvedValue(new Account(relayer.publicKey(), "100"));
       const prepareTransaction = vi.fn().mockImplementation((tx) => tx);
-      const sendTransaction = vi.fn().mockResolvedValue({ status: "PENDING", hash: "tx_mock_hash_123" });
+      const sendTransaction = vi
+        .fn()
+        .mockResolvedValue({ status: "PENDING", hash: "tx_mock_hash_123" });
       const getTransaction = vi.fn().mockResolvedValue({ status: "SUCCESS" });
       const getLatestLedger = vi.fn().mockResolvedValue({ sequence: 5000 });
       const simulateTransaction = vi.fn().mockResolvedValue({
@@ -83,11 +74,7 @@ describe("Threshold Attestor Submitter & Key Management (#422)", () => {
 
     it("submits upsert with M-of-N threshold signatures", async () => {
       const server = setupMockServer();
-      const km = new ThresholdKeyManager([
-        signer1.secret(),
-        signer2.secret(),
-        signer3.secret(),
-      ]);
+      const km = new ThresholdKeyManager([signer1.secret(), signer2.secret(), signer3.secret()]);
 
       const submitter = createThresholdSubmitter({
         rpcUrl: "http://localhost:8000",
@@ -102,7 +89,11 @@ describe("Threshold Attestor Submitter & Key Management (#422)", () => {
       });
 
       const fakeWasm = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-      await submitter.upsert("CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM", fakeWasm, 6000);
+      await submitter.upsert(
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        fakeWasm,
+        6000,
+      );
 
       expect(server.getAccount).toHaveBeenCalledWith(relayer.publicKey());
       expect(server.sendTransaction).toHaveBeenCalled();
@@ -111,11 +102,7 @@ describe("Threshold Attestor Submitter & Key Management (#422)", () => {
 
     it("measures revocation latency and executes fast-path revoke", async () => {
       const server = setupMockServer();
-      const km = new ThresholdKeyManager([
-        signer1.secret(),
-        signer2.secret(),
-        signer3.secret(),
-      ]);
+      const km = new ThresholdKeyManager([signer1.secret(), signer2.secret(), signer3.secret()]);
 
       const submitter = createThresholdSubmitter({
         rpcUrl: "http://localhost:8000",

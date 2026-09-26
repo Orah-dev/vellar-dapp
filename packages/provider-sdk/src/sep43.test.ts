@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  createSep43Provider,
-  mapToSep43Error,
-  passphraseToNetwork,
-  VellarModule,
-} from "./sep43";
+import { createSep43Provider, mapToSep43Error, passphraseToNetwork, VellarModule } from "./sep43";
 import type { PageTransport } from "./page-provider";
 import {
   errorPayload,
@@ -13,15 +8,25 @@ import {
   type ResponsePayload,
 } from "./protocol";
 
-function harness(answer?: (id: string, method: string, params: any) => ResponsePayload | undefined) {
+function harness(
+  answer?: (id: string, method: string, params: any) => ResponsePayload | undefined,
+) {
   let inbound: (data: unknown) => void = () => {};
   const sent: Array<{ id: string; method: string; params: any }> = [];
   const transport: PageTransport = {
     send(data) {
       const envelope = parseRequestEnvelope(data);
       if (!envelope) throw new Error("provider sent an invalid envelope");
-      sent.push({ id: envelope.id, method: envelope.request.method, params: (envelope.request as any).params });
-      let payload = answer?.(envelope.id, envelope.request.method, (envelope.request as any).params);
+      sent.push({
+        id: envelope.id,
+        method: envelope.request.method,
+        params: (envelope.request as any).params,
+      });
+      let payload = answer?.(
+        envelope.id,
+        envelope.request.method,
+        (envelope.request as any).params,
+      );
       if (!payload && envelope.request.method === "get_network") {
         payload = {
           method: "get_network",
@@ -46,7 +51,10 @@ describe("SEP-43 Provider", () => {
   });
 
   it("mapToSep43Error maps standard error codes", () => {
-    expect(mapToSep43Error({ code: -3, message: "rejected" })).toEqual({ code: -3, message: "rejected" });
+    expect(mapToSep43Error({ code: -3, message: "rejected" })).toEqual({
+      code: -3,
+      message: "rejected",
+    });
   });
 
   it("getAddress connects and returns address", async () => {

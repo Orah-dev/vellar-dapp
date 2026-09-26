@@ -9,19 +9,15 @@ import { getSupportedTokens, TESTNET_NATIVE_SAC, MAINNET_NATIVE_SAC } from "./to
 // Balance data for the dashboard. The RPC reader (and stellar-sdk with it)
 // loads lazily on first use, keeping it off the onboarding path.
 
-export async function fetchBalances(
-  accountId: string,
-  network?: Network,
-): Promise<TokenBalance[]> {
+export async function fetchBalances(accountId: string, network?: Network): Promise<TokenBalance[]> {
   const config = walletConfig();
   const currentNetwork: Network =
-    network ??
-    (config.networkPassphrase.toLowerCase().includes("test")
-      ? "testnet"
-      : "mainnet");
+    network ?? (config.networkPassphrase.toLowerCase().includes("test") ? "testnet" : "mainnet");
 
-  const [{ createBalanceService }, { createRpcBalanceReader, nativeToken }] =
-    await Promise.all([import("vellar-sdk"), import("vellar-sdk/rpc")]);
+  const [{ createBalanceService }, { createRpcBalanceReader, nativeToken }] = await Promise.all([
+    import("vellar-sdk"),
+    import("vellar-sdk/rpc"),
+  ]);
 
   const rawReader = createRpcBalanceReader({
     rpcUrl: config.rpcUrl,
@@ -47,10 +43,7 @@ export async function fetchBalances(
     native = nativeToken(config.networkPassphrase);
   } catch {
     native = registeredTokens.find((t) => t.isNative) ?? {
-      contractId:
-        currentNetwork === "mainnet"
-          ? MAINNET_NATIVE_SAC
-          : TESTNET_NATIVE_SAC,
+      contractId: currentNetwork === "mainnet" ? MAINNET_NATIVE_SAC : TESTNET_NATIVE_SAC,
       symbol: "XLM",
       decimals: 7,
     };

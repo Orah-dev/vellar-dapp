@@ -316,4 +316,3 @@ were modified._
 - **Passkey Rate Limiting**: `POST /wallet/connect` in `wallet-service` is rate-limited per IP and `keyId`, returning `429` with `retry-after` header and tracking rate-limited auth attempts via `vela_passkey_auth_rate_limited_total` domain metric.
 - **CORS Origin Restriction**: `api-gateway` restricts allowed CORS origins to explicit web and extension domains (`http://localhost:3000`, `https://app.vellar.wallet`, `chrome-extension://vellar-wallet-extension`), with strict origin verification rejecting foreign/unauthorized origins.
 - **Contracts Build Pipeline Hardening**: All Rust dependencies in `contracts/Cargo.toml` (`soroban-sdk`, `ed25519-dalek`, `smart-wallet-interface`) are pinned to exact versions and commit hashes, with CI verification enforcing supply-chain security.
-

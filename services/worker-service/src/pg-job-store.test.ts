@@ -50,7 +50,13 @@ describe.skipIf(!DATABASE_URL)("createPgJobStore — reaper + queue controls (M7
   }
 
   beforeAll(async () => {
-    pool = new pg.Pool({ connectionString: DATABASE_URL });
+    // Own schema per test file: vitest runs files (and turbo runs packages) in
+    // parallel against one database, and these suites TRUNCATE + reseed.
+    pool = new pg.Pool({
+      connectionString: DATABASE_URL,
+      options: "-c search_path=worker_pg_job_store_test",
+    });
+    await pool.query("CREATE SCHEMA IF NOT EXISTS worker_pg_job_store_test");
     db = drizzle(pool);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS verification_records (
@@ -163,8 +169,7 @@ describe("createPgJobStore — import-validation (issue #346)", () => {
       update: () => ({
         set: () => ({
           where: () => ({
-            returning: () =>
-              Promise.resolve(rows),
+            returning: () => Promise.resolve(rows),
           }),
         }),
       }),
@@ -178,15 +183,18 @@ describe("createPgJobStore — import-validation (issue #346)", () => {
     const claimed = await store.claimSubmitted(10);
 
     expect(claimed).toHaveLength(1);
-    expect(claimed[0].recordId).toBe("rec-1");
-    expect(claimed[0].contractId).toBe(C1);
+    expect(claimed[0]!.recordId).toBe("rec-1");
+    expect(claimed[0]!.contractId).toBe(C1);
   });
 
   it("rejects a record with malformed contractId and logs the reason", async () => {
     const fakeDb = makeFakeDb([
       {
         id: "rec-bad",
-        record: { ...validRecord("rec-bad"), contractId: "GCMCEGOUVALP2H6LTY7IPUUMSFKDQUMK3SDU5DI7LETNEZZKHRIIALKM" },
+        record: {
+          ...validRecord("rec-bad"),
+          contractId: "GCMCEGOUVALP2H6LTY7IPUUMSFKDQUMK3SDU5DI7LETNEZZKHRIIALKM",
+        },
       },
     ]);
 
@@ -274,13 +282,14 @@ describe("createPgJobStore — import-validation (issue #346)", () => {
     const createdAt = "2026-06-15T10:30:00.000Z";
     const expectedMs = Date.parse(createdAt);
     const fakeDb = makeFakeDb([
-      { id: "rec-1", record: { ...validRecord("rec-1"), createdAt } },
+      // updatedAt must not precede createdAt (#346 invariant), so move both.
+      { id: "rec-1", record: { ...validRecord("rec-1"), createdAt, updatedAt: createdAt } },
     ]);
 
     const store = createPgJobStore(fakeDb);
     const claimed = await store.claimSubmitted(1);
 
-    expect(claimed[0].submittedAtMs).toBe(expectedMs);
+    expect(claimed[0]!.submittedAtMs).toBe(expectedMs);
   });
 
   it("handles optional fields correctly when present", async () => {
@@ -300,7 +309,7 @@ describe("createPgJobStore — import-validation (issue #346)", () => {
     const store = createPgJobStore(fakeDb);
     const claimed = await store.claimSubmitted(1);
 
-    expect(claimed[0].buildFlags).toEqual(["--release", "--opt-level=z"]);
+    expect(claimed[0]!.buildFlags).toEqual(["--release", "--opt-level=z"]);
   });
 
   it("skips unknown extra jsonb fields (forward-compatible)", async () => {
@@ -320,6 +329,6 @@ describe("createPgJobStore — import-validation (issue #346)", () => {
 
     // Should succeed — unknown fields don't cause rejection.
     expect(claimed).toHaveLength(1);
-    expect(claimed[0].recordId).toBe("rec-1");
+    expect(claimed[0]!.recordId).toBe("rec-1");
   });
 });

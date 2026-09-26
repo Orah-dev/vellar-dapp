@@ -99,6 +99,22 @@ describe("MemoryCacheStore", () => {
     } finally {
       vi.useRealTimers();
     }
+    const cache2 = new MemoryCacheStore(200); // Longer TTL
+    await cache2.set("balance", "key1", "value1");
+
+    // Past cache2's 200ms TTL so key1 has expired.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const cache1 = new MemoryCacheStore(100);
+    await cache1.set("nonce", "key2", "value2");
+
+    // key1 should be expired, key2 should not
+    const removed = await cache1.cleanup();
+    expect(removed).toBe(0); // cache1 has no expired entries
+
+    // But we can clean cache2
+    const removed2 = await cache2.cleanup();
+    expect(removed2).toBe(1); // cache2.key1 is expired
   });
 
   it("handles different value types", async () => {

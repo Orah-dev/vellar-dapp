@@ -67,11 +67,17 @@ describe("createCircuitBreaker — opening", () => {
 
   it("CircuitOpenError reports the remaining cooldown", async () => {
     const clock = fakeClock();
-    const breaker = createCircuitBreaker({ failureThreshold: 1, cooldownMs: 10_000, now: clock.now });
+    const breaker = createCircuitBreaker({
+      failureThreshold: 1,
+      cooldownMs: 10_000,
+      now: clock.now,
+    });
     await expect(breaker.execute(() => Promise.reject(new Error("x")))).rejects.toThrow();
 
     clock.advance(4_000);
-    const err = await breaker.execute(() => Promise.reject(new Error("unreachable"))).catch((e) => e);
+    const err = await breaker
+      .execute(() => Promise.reject(new Error("unreachable")))
+      .catch((e) => e);
     expect(err).toBeInstanceOf(CircuitOpenError);
     expect((err as CircuitOpenError).retryAfterMs).toBe(6_000);
   });
@@ -80,7 +86,11 @@ describe("createCircuitBreaker — opening", () => {
 describe("createCircuitBreaker — half-open transition and resolution", () => {
   it("allows exactly one trial call after the cooldown elapses", async () => {
     const clock = fakeClock();
-    const breaker = createCircuitBreaker({ failureThreshold: 1, cooldownMs: 10_000, now: clock.now });
+    const breaker = createCircuitBreaker({
+      failureThreshold: 1,
+      cooldownMs: 10_000,
+      now: clock.now,
+    });
     await expect(breaker.execute(() => Promise.reject(new Error("x")))).rejects.toThrow();
     expect(breaker.state).toBe("open");
 
@@ -93,7 +103,11 @@ describe("createCircuitBreaker — half-open transition and resolution", () => {
 
   it("a failing trial call re-opens the breaker with a fresh cooldown", async () => {
     const clock = fakeClock();
-    const breaker = createCircuitBreaker({ failureThreshold: 1, cooldownMs: 10_000, now: clock.now });
+    const breaker = createCircuitBreaker({
+      failureThreshold: 1,
+      cooldownMs: 10_000,
+      now: clock.now,
+    });
     await expect(breaker.execute(() => Promise.reject(new Error("x")))).rejects.toThrow();
 
     clock.advance(10_000); // cooldown elapsed
@@ -105,13 +119,19 @@ describe("createCircuitBreaker — half-open transition and resolution", () => {
     // Immediately after the failed trial, the ORIGINAL cooldown has not
     // magically re-elapsed — the fresh window starts from the trial's
     // failure time, not the original open time.
-    const err = await breaker.execute(() => Promise.reject(new Error("unreachable"))).catch((e) => e);
+    const err = await breaker
+      .execute(() => Promise.reject(new Error("unreachable")))
+      .catch((e) => e);
     expect(err).toBeInstanceOf(CircuitOpenError);
   });
 
   it("does not allow a trial call before the cooldown has elapsed", async () => {
     const clock = fakeClock();
-    const breaker = createCircuitBreaker({ failureThreshold: 1, cooldownMs: 10_000, now: clock.now });
+    const breaker = createCircuitBreaker({
+      failureThreshold: 1,
+      cooldownMs: 10_000,
+      now: clock.now,
+    });
     await expect(breaker.execute(() => Promise.reject(new Error("x")))).rejects.toThrow();
 
     clock.advance(9_999); // one ms short
@@ -124,7 +144,11 @@ describe("createCircuitBreaker — half-open transition and resolution", () => {
 describe("createCircuitBreaker — beforeCall/recordOutcome (hook-based callers, e.g. @fastify/http-proxy)", () => {
   it("beforeCall throws CircuitOpenError when open, without needing a wrapped promise", () => {
     const clock = fakeClock();
-    const breaker = createCircuitBreaker({ failureThreshold: 1, cooldownMs: 5_000, now: clock.now });
+    const breaker = createCircuitBreaker({
+      failureThreshold: 1,
+      cooldownMs: 5_000,
+      now: clock.now,
+    });
     breaker.recordOutcome("failure");
     expect(breaker.state).toBe("open");
 
@@ -133,7 +157,11 @@ describe("createCircuitBreaker — beforeCall/recordOutcome (hook-based callers,
 
   it("beforeCall allows the half-open trial through after cooldown, matching execute's behavior", () => {
     const clock = fakeClock();
-    const breaker = createCircuitBreaker({ failureThreshold: 1, cooldownMs: 5_000, now: clock.now });
+    const breaker = createCircuitBreaker({
+      failureThreshold: 1,
+      cooldownMs: 5_000,
+      now: clock.now,
+    });
     breaker.recordOutcome("failure");
     clock.advance(5_000);
 

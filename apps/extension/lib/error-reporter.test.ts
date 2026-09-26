@@ -1,9 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import {
-  ErrorReporter,
-  DefaultErrorReportClient,
-  type ErrorReportPayload,
-} from "./error-reporter";
+import { ErrorReporter, DefaultErrorReportClient, type ErrorReportPayload } from "./error-reporter";
 
 describe("extension error reporter integration (#302)", () => {
   it("includes extension version and browser info in reported errors", async () => {

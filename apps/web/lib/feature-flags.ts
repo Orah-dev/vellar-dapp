@@ -38,7 +38,10 @@ const FLAG_ENV_PREFIX = "NEXT_PUBLIC_FLAG_";
  * references, so the `process.env` default is empty in the browser and the
  * flag would read as off (see app/policies/page.tsx).
  */
-export function readFlagConfig(name: string, env: Record<string, string | undefined> = process.env): FeatureFlagConfig {
+export function readFlagConfig(
+  name: string,
+  env: Record<string, string | undefined> = process.env,
+): FeatureFlagConfig {
   const key = toEnvKey(name);
   const rolloutRaw = env[`${FLAG_ENV_PREFIX}${key}_ROLLOUT_PERCENT`];
   const allowlistRaw = env[`${FLAG_ENV_PREFIX}${key}_ALLOWLIST`];
@@ -61,9 +64,7 @@ export function readFlagConfig(name: string, env: Record<string, string | undefi
 }
 
 function toEnvKey(name: string): string {
-  return name
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .toUpperCase();
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase();
 }
 
 /**

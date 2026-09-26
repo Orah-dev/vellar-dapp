@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Settings from "./page";
 import {
@@ -45,6 +45,12 @@ vi.mock("@/lib/extension-pairing", () => ({
 }));
 
 describe("Agent Session Keys: List + Revoke (#395)", () => {
+  // revokeOnChainAgentKey lazy-imports passkey-kit; load it once up front so a
+  // cold import under a busy test runner doesn't eat the per-test timeout.
+  beforeAll(async () => {
+    await import("passkey-kit");
+  }, 60_000);
+
   let queryClient: QueryClient;
 
   beforeEach(() => {
@@ -58,9 +64,7 @@ describe("Agent Session Keys: List + Revoke (#395)", () => {
   });
 
   function renderWithClient(ui: React.ReactElement) {
-    return render(
-      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
-    );
+    return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
   }
 
   it("lists agent keys with live on-chain status, distinguishing active, expired, and revoked", async () => {

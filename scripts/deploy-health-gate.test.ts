@@ -110,7 +110,10 @@ describe("runHealthGate", () => {
       consecutive: 2,
       intervalMs: 1000,
       timeoutMs: 60_000,
-      fetchImpl: scriptedFetch([{ ok: true, status: 200 }, { ok: true, status: 200 }]),
+      fetchImpl: scriptedFetch([
+        { ok: true, status: 200 },
+        { ok: true, status: 200 },
+      ]),
       now: clock.now,
       sleepImpl: clock.sleep,
       onAttempt,
