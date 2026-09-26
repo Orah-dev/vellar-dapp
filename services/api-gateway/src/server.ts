@@ -12,7 +12,8 @@ import {
   registerHealth,
   registerMetrics,
 } from "@vellar/service-kit";
-import { registerProxyRoute } from "./register-proxy-route";
+import { registerErrorEnvelope, sendError } from "./error-envelope";
+import { registerVersionedProxyRoute } from "./register-proxy-route";
 import { TokenBucketLimiter } from "./token-bucket";
 
 // Gateway (technical-doc.md §6.3, §8; idea.md §12): the single public entry
@@ -106,6 +107,11 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
     connectionTimeout: requestTimeoutMs,
   });
 
+  // Standardized error envelope (issue #262) for every response this
+  // gateway sends directly (a proxied upstream error is forwarded
+  // unchanged, not touched by this).
+  registerErrorEnvelope(app);
+
   // Structured request logging middleware (idea.md §13, docs/observability.md):
   // Emits structured JSON containing method, path, status, and duration for every request.
   app.addHook("onResponse", async (request, reply) => {
@@ -177,9 +183,7 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
       const result = tenantLimiter.tryConsume(tenantId);
       if (!result.allowed) {
         reply.header("Retry-After", String(result.retryAfterSeconds ?? 1));
-        return reply.code(429).send({
-          error: "too_many_requests",
-          message: "Tenant rate limit exceeded. Please retry later.",
+        return sendError(reply, 429, "too_many_requests", "Tenant rate limit exceeded. Please retry later.", {
           retryAfter: result.retryAfterSeconds,
         });
       }
@@ -188,9 +192,7 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
     // Body-size cap (413) — reject before the body is streamed upstream.
     const declaredLen = Number(request.headers["content-length"] ?? 0);
     if (Number.isFinite(declaredLen) && declaredLen > maxBodyBytes) {
-      return reply
-        .code(413)
-        .send({ error: "payload_too_large", reason: `body exceeds ${maxBodyBytes} bytes` });
+      return sendError(reply, 413, "payload_too_large", `Body exceeds ${maxBodyBytes} bytes.`);
     }
 
     // CSRF mitigation for a cookieless API (idea.md §12): this gateway uses no
@@ -202,10 +204,12 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
     if (isMutation) {
       const ct = request.headers["content-type"] ?? "";
       if (!ct.toLowerCase().includes("application/json")) {
-        return reply.code(415).send({
-          error: "unsupported_media_type",
-          reason: "Content-Type must be application/json",
-        });
+        return sendError(
+          reply,
+          415,
+          "unsupported_media_type",
+          "Content-Type must be application/json.",
+        );
       }
     }
   });
@@ -213,15 +217,15 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
   registerHealth(app, "api-gateway");
   registerMetrics(app, "api-gateway");
 
-  registerProxyRoute(app, { upstream: walletServiceUrl, prefix: "/wallet" });
+  registerVersionedProxyRoute(app, { upstream: walletServiceUrl, prefix: "/wallet" });
 
   const lifecycleServiceUrl =
     options.lifecycleServiceUrl ?? process.env.LIFECYCLE_SERVICE_URL ?? "http://localhost:4002";
-  registerProxyRoute(app, { upstream: lifecycleServiceUrl, prefix: "/lifecycle" });
+  registerVersionedProxyRoute(app, { upstream: lifecycleServiceUrl, prefix: "/lifecycle" });
 
   const policyServiceUrl =
     options.policyServiceUrl ?? process.env.POLICY_SERVICE_URL ?? "http://localhost:4003";
-  registerProxyRoute(app, { upstream: policyServiceUrl, prefix: "/policies" });
+  registerVersionedProxyRoute(app, { upstream: policyServiceUrl, prefix: "/policies" });
 
   const verificationServiceUrl =
     options.verificationServiceUrl ??
@@ -256,7 +260,7 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
     },
   });
 
-  registerProxyRoute(app, {
+  registerVersionedProxyRoute(app, {
     upstream: verificationServiceUrl,
     prefix: "/verification",
     // Runs before the proxy forwards the request — fast-fails while the
@@ -267,11 +271,13 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
         verificationBreaker.beforeCall();
       } catch (err) {
         if (err instanceof CircuitOpenError) {
-          return reply.code(503).send({
-            error: "verification_service_unavailable",
-            reason: "circuit breaker open — verification-service is failing",
-            retryAfterMs: err.retryAfterMs,
-          });
+          return sendError(
+            reply,
+            503,
+            "verification_service_unavailable",
+            "Circuit breaker open: verification-service is failing.",
+            { retryAfterMs: err.retryAfterMs },
+          );
         }
         throw err;
       }

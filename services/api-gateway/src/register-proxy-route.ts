@@ -59,3 +59,18 @@ export function registerProxyRoute(app: FastifyInstance, options: ProxyRouteOpti
   const { upstream, prefix, rewritePrefix = prefix, preHandler, replyOptions } = options;
   app.register(proxy, { upstream, prefix, rewritePrefix, preHandler, replyOptions });
 }
+
+/**
+ * Registers a proxy route under BOTH a versioned `/v1` prefix and the
+ * legacy unversioned prefix, both rewriting to the same backend path
+ * (issue #258). The legacy path is a temporary migration-window alias, not
+ * a second surface to maintain long-term — see docs/api-versioning.md for
+ * the deprecation policy. Both variants share every other option
+ * (preHandler, replyOptions, circuit breakers, etc.) so a caller does not
+ * need to duplicate route-specific logic to get both.
+ */
+export function registerVersionedProxyRoute(app: FastifyInstance, options: ProxyRouteOptions): void {
+  const { prefix, rewritePrefix = prefix, ...rest } = options;
+  registerProxyRoute(app, { ...rest, prefix: `/v1${prefix}`, rewritePrefix });
+  registerProxyRoute(app, { ...rest, prefix, rewritePrefix });
+}
