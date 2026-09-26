@@ -110,15 +110,15 @@ export class MemoryCacheStore implements CacheOperation {
  * Create a no-op cache (useful for testing or when caching is disabled).
  */
 export class NoOpCache implements CacheOperation {
-  async get<T = unknown>(): Promise<CacheGetResult<T>> {
+  async get<T = unknown>(_resource: CacheResourceType, _key: string): Promise<CacheGetResult<T>> {
     return { hit: false };
   }
 
-  async set<T = unknown>(): Promise<void> {
+  async set<T = unknown>(_resource: CacheResourceType, _key: string, _value: T): Promise<void> {
     // no-op
   }
 
-  async delete(): Promise<void> {
+  async delete(_resource: CacheResourceType, _key: string): Promise<void> {
     // no-op
   }
 }
