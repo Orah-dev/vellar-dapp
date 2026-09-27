@@ -38,12 +38,24 @@ export const walletSessions = pgTable("wallet_sessions", {
   expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
 });
 
-export const activityLogs = pgTable("activity_logs", {
-  id: text("id").primaryKey(),
-  type: text("type").notNull(),
-  at: timestamp("at", { withTimezone: true, mode: "date" }).notNull(),
-  data: jsonb("data").notNull().$type<Record<string, unknown>>(),
-});
+export const activityLogs = pgTable(
+  "activity_logs",
+  {
+    id: text("id").primaryKey(),
+    type: text("type").notNull(),
+    at: timestamp("at", { withTimezone: true, mode: "date" }).notNull(),
+    data: jsonb("data").notNull().$type<Record<string, unknown>>(),
+    // Real, indexed column (issue #256), not the data.actor JSONB field it
+    // was previously read from: a paginated per-wallet transaction history
+    // query needs an indexed predicate, not a full-table load filtered in
+    // application code. Nullable: many event types (session/policy actions
+    // recorded without an actor) have none.
+    actor: text("actor"),
+  },
+  (table) => [
+    index("activity_logs_actor_at_id_idx").on(table.actor, table.at, table.id),
+  ],
+);
 
 // Rolling-window funding-path spend ledger (security-audit.md H1/M2/FIX 3).
 // One row per sponsored/created call; the budget check sums stroops and counts

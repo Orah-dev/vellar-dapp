@@ -1,6 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createCachedAccountReader } from "./account-cache";
-import { createNoOpAuditLog } from "./audit";
 import type { HorizonAccount } from "./horizon";
 import { buildServer, fakeFacilitatorClient } from "./server";
 
@@ -63,7 +62,6 @@ describe("POST /lifecycle/merge invalidates the cached source and destination ac
     const reader = createCachedAccountReader(underlying);
     const app = buildServer({
       reader,
-      auditLog: createNoOpAuditLog(),
       x402FacilitatorClient: fakeFacilitatorClient(),
     });
     await app.ready();
@@ -115,7 +113,6 @@ describe("POST /lifecycle/merge invalidates the cached source and destination ac
     };
     const app = buildServer({
       reader: plainReader,
-      auditLog: createNoOpAuditLog(),
       x402FacilitatorClient: fakeFacilitatorClient(),
     });
     await app.ready();
@@ -154,7 +151,6 @@ describe("POST /lifecycle/merge invalidates the cached source and destination ac
     const reader = createCachedAccountReader(underlying);
     const app = buildServer({
       reader,
-      auditLog: createNoOpAuditLog(),
       x402FacilitatorClient: fakeFacilitatorClient(),
     });
     await app.ready();

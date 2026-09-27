@@ -76,6 +76,7 @@ describe("vellar-sdk ↔ policy-service /policies/deploy seam (RA-11-E)", () => 
 
     const client = createPolicyClient({
       apiUrl: "http://policy.test",
+      network: "testnet",
       fetch: fetchImpl,
     });
 
@@ -120,11 +121,7 @@ describe("vellar-sdk ↔ policy-service /policies/deploy seam (RA-11-E)", () => 
     }));
 
     const policyId = await seedPolicy(true);
-    const policy = await client.recordDeployment(
-      policyId,
-      "real_valid_hash",
-      POLICY_CONTRACT,
-    );
+    const policy = await client.recordDeployment(policyId, "real_valid_hash", POLICY_CONTRACT);
 
     expect(policy.status).toBe("deployed");
     const stored = await policies.find(policyId);
@@ -140,11 +137,7 @@ describe("vellar-sdk ↔ policy-service /policies/deploy seam (RA-11-E)", () => 
 
     const policyId = await seedPolicy(true);
     try {
-      await client.recordDeployment(
-        policyId,
-        "mismatched_hash",
-        POLICY_CONTRACT,
-      );
+      await client.recordDeployment(policyId, "mismatched_hash", POLICY_CONTRACT);
       expect.fail("Expected PolicyApiError to be thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(PolicyApiError);
@@ -162,11 +155,7 @@ describe("vellar-sdk ↔ policy-service /policies/deploy seam (RA-11-E)", () => 
     const policyId = await seedPolicy(false); // No instance
 
     try {
-      await client.recordDeployment(
-        policyId,
-        "some_hash",
-        POLICY_CONTRACT,
-      );
+      await client.recordDeployment(policyId, "some_hash", POLICY_CONTRACT);
       expect.fail("Expected PolicyApiError to be thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(PolicyApiError);
@@ -183,11 +172,7 @@ describe("vellar-sdk ↔ policy-service /policies/deploy seam (RA-11-E)", () => 
 
     const policyId = await seedPolicy(true);
     try {
-      await client.recordDeployment(
-        policyId,
-        "pending_hash",
-        POLICY_CONTRACT,
-      );
+      await client.recordDeployment(policyId, "pending_hash", POLICY_CONTRACT);
       expect.fail("Expected PolicyApiError to be thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(PolicyApiError);
@@ -207,11 +192,7 @@ describe("vellar-sdk ↔ policy-service /policies/deploy seam (RA-11-E)", () => 
 
     const policyId = await seedPolicy(true);
     try {
-      await client.recordDeployment(
-        policyId,
-        "hash_during_outage",
-        POLICY_CONTRACT,
-      );
+      await client.recordDeployment(policyId, "hash_during_outage", POLICY_CONTRACT);
       expect.fail("Expected PolicyApiError to be thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(PolicyApiError);

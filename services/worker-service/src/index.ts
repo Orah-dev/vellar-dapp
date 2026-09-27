@@ -1,7 +1,16 @@
 import pg from "pg";
 import Fastify from "fastify";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { domainMetrics, portFromEnv, registerHealth, registerMetrics } from "@vellar/service-kit";
+import {
+  createRpcPool,
+  domainMetrics,
+  portFromEnv,
+  registerHealth,
+  registerMetrics,
+  signingKeyFromEnv,
+  verifySigningKeys,
+} from "@vellar/service-kit";
+import { Keypair } from "@stellar/stellar-sdk";
 import { configFromEnv, executorFromConfig } from "./config";
 import { createRpcArtifactResolver } from "./resolver";
 import { createPgJobStore } from "./pg-job-store";
@@ -43,7 +52,7 @@ if (!config.databaseUrl) {
   // than idle-poll forever against nothing.
   safeLog(
     "error",
-    "[worker-service] DATABASE_URL is not set — the build worker needs the shared verification store. Exiting."
+    "[worker-service] DATABASE_URL is not set — the build worker needs the shared verification store. Exiting.",
   );
   process.exit(1);
 }
@@ -51,10 +60,42 @@ if (!config.databaseUrl) {
 const pool = new pg.Pool({ connectionString: config.databaseUrl });
 const db = drizzle(pool);
 const store = createPgJobStore(db);
-const resolver = createRpcArtifactResolver({ rpcUrl: config.rpcUrl, timeoutMs: config.rpcTimeoutMs });
+const resolver = createRpcArtifactResolver({
+  rpcUrl: config.rpcUrl,
+  timeoutMs: config.rpcTimeoutMs,
+});
 const { executor, mode } = executorFromConfig(config);
 
 const log = createSafeLogger();
+
+// RPC health-check rotation: probe every configured Soroban RPC endpoint
+// (STELLAR_RPC_URLS, else STELLAR_RPC_URL) and route calls to the first
+// healthy, non-lagging one in priority order. Every URL already passed the
+// RA-10 network cross-check in configFromEnv.
+const rpcPool = createRpcPool({
+  urls: config.rpcPool.urls,
+  intervalMs: config.rpcPool.intervalMs,
+  timeoutMs: config.rpcPool.timeoutMs,
+  maxLedgerLag: config.rpcPool.maxLedgerLag,
+  onRotate(from, to, reason) {
+    log.info(`rpc endpoint rotated ${from} -> ${to} (${reason}).`);
+  },
+  onProbe(health) {
+    for (const endpoint of health) {
+      if (!endpoint.healthy) {
+        domainMetrics.rpcErrors.inc({ service: "worker-service", upstream: "soroban-rpc" });
+      }
+    }
+  },
+});
+rpcPool.start();
+
+const resolver = createRpcArtifactResolver({
+  rpcUrl: config.rpcUrl,
+  rpcPool,
+  timeoutMs: config.rpcTimeoutMs,
+});
+const { executor, mode } = executorFromConfig(config);
 
 if (mode === "stub") {
   log.info(
@@ -97,6 +138,11 @@ const metrics: WorkerMetrics = {
 const metricsApp = Fastify({ logger: false });
 registerHealth(metricsApp, "worker-service");
 registerMetrics(metricsApp, "worker-service");
+// Per-endpoint RPC health, for operators diagnosing a rotation.
+metricsApp.get("/health/rpc", async () => ({
+  current: rpcPool.current(),
+  endpoints: rpcPool.snapshot(),
+}));
 await metricsApp.listen({
   port: portFromEnv("WORKER_METRICS_PORT", 4005),
   host: "0.0.0.0",
@@ -120,9 +166,30 @@ if (config.attestorSecretKey && config.attestationRegistryId) {
     safeLog("error", `[worker-service] ${err instanceof Error ? err.message : String(err)}`, err);
     process.exit(1);
   }
+  // Q3 (architecture-analysis.md §8): confirm ATTESTOR_SECRET_KEY is the
+  // pinned attestor account for the declared network (ATTESTOR_PUBLIC_KEY,
+  // required on mainnet). Refuses to boot on a mismatch or an unparseable key.
+  try {
+    const report = verifySigningKeys({
+      network: config.network,
+      keys: [signingKeyFromEnv("attestor")],
+      derivePublicKey: (secret) => Keypair.fromSecret(secret).publicKey(),
+      allowUnpinned: process.env.ALLOW_UNPINNED_SIGNING_KEYS === "1",
+    });
+    for (const key of report.keys) {
+      log.info(
+        `attestor key ${key.publicKey} accepted for ${report.network}` +
+          (key.pinned ? " (pinned)." : " (UNPINNED — testnet or explicit override)."),
+      );
+    }
+  } catch (err) {
+    safeLog("error", `[worker-service] ${err instanceof Error ? err.message : String(err)}`, err);
+    process.exit(1);
+  }
   attestor = createAttestor({
     submitter: createRegistrySubmitter({
       rpcUrl: config.rpcUrl,
+      rpcPool,
       networkPassphrase: config.networkPassphrase,
       registryContractId: config.attestationRegistryId,
       attestorSecretKey: config.attestorSecretKey,
@@ -151,7 +218,9 @@ const loop = startWorkerLoop({
   metrics,
   attestor,
 });
-log.info(`build worker started (rpc=${config.rpcUrl}). Polling for submitted verifications.`);
+log.info(
+  `build worker started (rpc=${config.rpcPool.urls.join(",")}). Polling for submitted verifications.`,
+);
 
 // Consumer groups (issue #354): domain-specific consumer groups allow
 // independent scaling and monitoring. Currently we run a single verification
@@ -166,7 +235,7 @@ const verificationGroup = createVerificationGroup({
   log,
 });
 log.info(
-  `verification consumer group started (concurrency=${config.workerConcurrency ?? 1}, rpc=${config.rpcUrl}).`,
+  `verification consumer group started (concurrency=${config.workerConcurrency ?? 1}, rpc=${rpcPool.current()}).`,
 );
 
 // Reaper (M7): periodically return crashed 'building' rows to the queue, or
@@ -187,8 +256,6 @@ const runReaper = async () => {
     const res = await store.reapStranded({
       timeoutMs: config.reapTimeoutMs,
       maxAttempts: config.maxBuildAttempts,
-      baseBackoffDelayMs: config.backoffBaseDelayMs,
-      maxBackoffDelayMs: config.maxBackoffDelayMs,
       // Track retry attempts for metrics
       onReclaimed: (attempt: number) => {
         domainMetrics.verificationRetry.inc({
@@ -210,7 +277,10 @@ const runReaper = async () => {
     log.error("reaper sweep failed", err);
   } finally {
     if (!reaperStopped) {
-      reapTimer = setTimeout(runReaper, jitteredDelayMs(config.reapIntervalMs, config.reapJitterMs));
+      reapTimer = setTimeout(
+        runReaper,
+        jitteredDelayMs(config.reapIntervalMs, config.reapJitterMs),
+      );
     }
   }
 };
@@ -252,6 +322,7 @@ const shutdown = async () => {
   reaperStopped = true;
   clearTimeout(reapTimer);
   clearInterval(cleanupTimer);
+  rpcPool.stop();
   await metricsApp.close();
   await pool.end();
   process.exit(0);

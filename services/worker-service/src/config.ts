@@ -1,5 +1,5 @@
 import { dockerBuildExecutor, stubBuildExecutor, type BuildExecutor } from "./executor";
-import { resolveNetwork, type Network } from "@vellar/service-kit";
+import { resolveNetwork, rpcPoolConfigFromEnv, type Network, type RpcPoolEnv } from "@vellar/service-kit";
 
 export interface WorkerRuntimeConfig {
   /** The explicit, cross-checked network (RA-10). Resolved from STELLAR_NETWORK
@@ -7,7 +7,11 @@ export interface WorkerRuntimeConfig {
    * refuses to boot on an incoherent or missing network. Security decisions
    * (the M5 attestor guard) read THIS, never an inference from the passphrase. */
   network: Network;
+  /** The primary (highest-priority) RPC endpoint — `rpcPool.urls[0]`. */
   rpcUrl: string;
+  /** Every RPC endpoint (STELLAR_RPC_URLS, else STELLAR_RPC_URL) plus the
+   * health-check tuning for the rotation pool. Every URL is network-checked. */
+  rpcPool: RpcPoolEnv;
   /** Cap on the getContractData RPC round-trip when resolving the deployed
    * wasm hash (issue #330) — that call previously had no timeout at all, so
    * a hung upstream RPC endpoint could stall a worker job indefinitely.
@@ -55,12 +59,29 @@ export interface WorkerRuntimeConfig {
   workerConcurrency: number;
   /** Backpressure concurrency limit for concurrent transaction processing (default 2). */
   concurrencyLimit: number;
+  // ── ETL cleanup (issue #345) ─────────────────────────────────────────────
+  /** A terminal row (verified/failed/dead_letter) must be at least this many
+   * days old (measured from updated_at) before it is eligible for cleanup.
+   * Default 90 days. Env: CLEANUP_RETENTION_DAYS. */
+  cleanupRetentionDays: number;
+  /** Maximum rows processed per cleanup run. Keeps individual transactions
+   * small and the job safe to interrupt+resume. Default 500.
+   * Env: CLEANUP_BATCH_SIZE. */
+  cleanupBatchSize: number;
+  /** How often the cleanup job runs (ms). Default 86 400 000 = 24 h.
+   * Env: CLEANUP_INTERVAL_MS. */
+  cleanupIntervalMs: number;
+  /** When true (default) eligible rows are copied to verification_records_archive
+   * before being deleted (archive-then-delete). Set to false to hard-delete
+   * with no archival. Env: CLEANUP_ARCHIVE_ENABLED (0 disables). */
+  cleanupArchiveEnabled: boolean;
 }
 
 const TESTNET_RPC = "https://soroban-testnet.stellar.org";
 
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerRuntimeConfig {
-  const rpcUrl = env.STELLAR_RPC_URL || TESTNET_RPC;
+  const rpcPool = rpcPoolConfigFromEnv(TESTNET_RPC, env);
+  const rpcUrl = rpcPool.urls[0]!;
   const networkPassphrase = env.STELLAR_NETWORK_PASSPHRASE || "Test SDF Network ; September 2015";
   // RA-10: resolve the network EXPLICITLY (STELLAR_NETWORK, required) and refuse
   // to boot if it is missing or disagrees with the passphrase/RPC. This throws a
@@ -73,10 +94,12 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerRunti
     network: env.STELLAR_NETWORK,
     passphrase: networkPassphrase,
     rpcUrl,
+    rpcUrls: rpcPool.urls,
   });
   return {
     network,
     rpcUrl,
+    rpcPool,
     rpcTimeoutMs: env.VERIFY_RPC_TIMEOUT_MS ? Number(env.VERIFY_RPC_TIMEOUT_MS) : 10_000,
     databaseUrl: env.DATABASE_URL || undefined,
     buildImage: env.VERIFY_BUILD_IMAGE || undefined,
@@ -102,8 +125,12 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerRunti
     concurrencyLimit: env.WORKER_CONCURRENCY
       ? Number(env.WORKER_CONCURRENCY)
       : env.VERIFY_CONCURRENCY_LIMIT
-      ? Number(env.VERIFY_CONCURRENCY_LIMIT)
-      : 2,
+        ? Number(env.VERIFY_CONCURRENCY_LIMIT)
+        : 2,
+    cleanupRetentionDays: env.CLEANUP_RETENTION_DAYS ? Number(env.CLEANUP_RETENTION_DAYS) : 90,
+    cleanupBatchSize: env.CLEANUP_BATCH_SIZE ? Number(env.CLEANUP_BATCH_SIZE) : 500,
+    cleanupIntervalMs: env.CLEANUP_INTERVAL_MS ? Number(env.CLEANUP_INTERVAL_MS) : 86_400_000,
+    cleanupArchiveEnabled: env.CLEANUP_ARCHIVE_ENABLED !== "0",
   };
 }
 

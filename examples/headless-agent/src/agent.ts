@@ -74,7 +74,9 @@ export class HeadlessAgent {
    * fails, and the agent catches the error gracefully rather than crashing or looping.
    */
   async requestEndpoint(url: string, init?: RequestInit): Promise<AgentExecutionResult> {
-    console.log(`[Agent] Requesting ${url} using authorized agent key ${this.agentKey.stellarPublicKey}...`);
+    console.log(
+      `[Agent] Requesting ${url} using authorized agent key ${this.agentKey.stellarPublicKey}...`,
+    );
 
     let headers: Record<string, string> | undefined;
     if (init?.headers) {
@@ -164,12 +166,14 @@ if (typeof process !== "undefined" && process.argv[1]?.includes("agent.ts")) {
     console.log("=== Vellar Headless Autonomous Agent (x402) ===");
     const agent = await createAutonomousAgent({
       smartAccountAddress:
-        process.env.SMART_ACCOUNT_ADDRESS || "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        process.env.SMART_ACCOUNT_ADDRESS ||
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
       network: "testnet",
     });
 
     const targetUrl =
-      process.env.TARGET_URL || "https://api.vellar.xyz/verification/CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
+      process.env.TARGET_URL ||
+      "https://api.vellar.xyz/verification/CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
     const res = await agent.requestEndpoint(targetUrl);
     console.log("[Agent] Final Result:", res);
   })();

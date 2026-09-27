@@ -9,7 +9,6 @@ import { HTTPFacilitatorClient, type FacilitatorClient } from "@x402/core/server
 import type { SupportedResponse } from "@x402/core/types";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 
-
 // Verification API (idea.md §11, technical-doc.md §5.5/§7.6): a developer submits
 // a contract's source (repo+commit or upload) and build metadata; the service
 // stores a VerificationRecord and enqueues a deterministic-rebuild job. A build
@@ -40,6 +39,23 @@ export interface VerificationRecordInternal extends VerificationRecord {
   statusDetail?: string;
 }
 
+/** Opaque pagination cursor for VerificationRepository.listPage (issue
+ * #263): callers pass back a previous page's nextCursor verbatim. */
+export type VerificationCursor = string;
+
+export interface VerificationPage {
+  records: VerificationRecordInternal[];
+  hasMore: boolean;
+  /** Present iff hasMore; pass to the next call's `after` filter. */
+  nextCursor?: VerificationCursor;
+}
+
+export interface VerificationListFilter {
+  status?: VerificationRecordInternal["status"];
+  limit: number;
+  after?: VerificationCursor;
+}
+
 export interface VerificationRepository {
   insert(record: VerificationRecordInternal): Promise<void>;
   find(id: string): Promise<VerificationRecordInternal | undefined>;
@@ -51,6 +67,27 @@ export interface VerificationRepository {
   /** True when the contract already has an active (submitted|building) record —
    * per-contractId dedup (M7). */
   hasActiveForContract(contractId: string): Promise<boolean>;
+  /** Cursor-paginated, newest-first list across ALL contracts (issue #263) —
+   * distinct from findByContract, which is scoped to one contractId and
+   * unpaginated (a single contract's resubmission history is small). */
+  listPage(filter: VerificationListFilter): Promise<VerificationPage>;
+}
+
+/** Encodes a (createdAt, id) keyset position as an opaque cursor token,
+ * matching wallet-service's activity-log and policy-service's policy-list
+ * pagination in this same batch. Exported for reuse by
+ * createPgVerificationRepository. */
+export function encodeVerificationCursor(createdAt: string, id: string): VerificationCursor {
+  return Buffer.from(`${createdAt}:${id}`, "utf8").toString("base64url");
+}
+
+export function decodeVerificationCursor(cursor: VerificationCursor): { createdAt: string; id: string } {
+  const decoded = Buffer.from(cursor, "base64url").toString("utf8");
+  const sep = decoded.lastIndexOf(":");
+  if (sep <= 0 || sep === decoded.length - 1) {
+    throw new Error("malformed verification cursor");
+  }
+  return { createdAt: decoded.slice(0, sep), id: decoded.slice(sep + 1) };
 }
 
 export function createMemoryVerificationRepository(): VerificationRepository {
@@ -84,6 +121,36 @@ export function createMemoryVerificationRepository(): VerificationRepository {
         }
       }
       return false;
+    },
+    async listPage(filter) {
+      let filtered = [...records.values()];
+      if (filter.status) filtered = filtered.filter((r) => r.status === filter.status);
+
+      // Newest first: (createdAt, id) descending — id is the tiebreaker for
+      // a shared createdAt, same reasoning as wallet-service's activity log
+      // and policy-service's policy list in this same batch: createdAt
+      // alone is not a total order.
+      filtered.sort((a, b) => {
+        if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
+        return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+      });
+
+      if (filter.after) {
+        const decoded = decodeVerificationCursor(filter.after);
+        filtered = filtered.filter((r) => {
+          if (r.createdAt !== decoded.createdAt) return r.createdAt < decoded.createdAt;
+          return r.id < decoded.id;
+        });
+      }
+
+      const hasMore = filtered.length > filter.limit;
+      const page = hasMore ? filtered.slice(0, filter.limit) : filtered;
+      const last = page[page.length - 1];
+      return {
+        records: page,
+        hasMore,
+        nextCursor: hasMore && last ? encodeVerificationCursor(last.createdAt, last.id) : undefined,
+      };
     },
   };
 }
@@ -185,7 +252,12 @@ export interface VerificationServiceDeps {
 function capturedSupportedResponse(): SupportedResponse {
   return {
     kinds: [
-      { x402Version: 2, scheme: "exact", network: "stellar:pubnet", extra: { areFeesSponsored: true } },
+      {
+        x402Version: 2,
+        scheme: "exact",
+        network: "stellar:pubnet",
+        extra: { areFeesSponsored: true },
+      },
       {
         x402Version: 2,
         scheme: "upto",
@@ -222,10 +294,14 @@ export function fakeFacilitatorClient(): FacilitatorClient {
       return capturedSupportedResponse();
     },
     async verify() {
-      throw new Error("fakeFacilitatorClient: verify() is not supported — inject a real client to test payment.");
+      throw new Error(
+        "fakeFacilitatorClient: verify() is not supported — inject a real client to test payment.",
+      );
     },
     async settle() {
-      throw new Error("fakeFacilitatorClient: settle() is not supported — inject a real client to test payment.");
+      throw new Error(
+        "fakeFacilitatorClient: settle() is not supported — inject a real client to test payment.",
+      );
     },
   };
 }
@@ -376,6 +452,21 @@ export function buildServer(deps: VerificationServiceDeps = {}): FastifyInstance
     },
   };
   // --- end Vellar x402 setup ---
+  // Validate the contractId BEFORE the payment gate. Fastify runs onRequest
+  // hooks in registration order, so this hook (registered ahead of
+  // paymentMiddleware) rejects a malformed id with 400 before the caller is
+  // asked to pay — or charged — for a request that can only ever fail.
+  app.addHook("onRequest", async (request, reply) => {
+    if (request.method !== "GET" || request.routeOptions.url !== "/verification/:contractId") {
+      return;
+    }
+    const parsed = contractIdSchema.safeParse(
+      (request.params as { contractId?: string }).contractId,
+    );
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_contract_id" });
+    }
+  });
   paymentMiddleware(app, x402Routes, x402Server); // Vellar x402: gate the route below
   app.get("/verification/:contractId", async (request, reply) => {
     const parsed = contractIdSchema.safeParse(

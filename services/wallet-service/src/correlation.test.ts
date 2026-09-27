@@ -82,7 +82,7 @@ describe("Correlation ID end-to-end propagation (Issue #299)", () => {
 
     const mockExecutor: BuildExecutor = {
       async build() {
-        return { wasmHash: "hash123", log: "built successfully" };
+        return { wasm: new Uint8Array(), wasmHash: "hash123", log: "built successfully" };
       },
     };
 

@@ -1,20 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { formatTokenAmount } from "vellar-sdk";
 import { AppShell } from "@/components/app-shell";
-import { Eyebrow, LpActionButton } from "@/app/landing/ui";
+import { Eyebrow, Frame, LpActionButton } from "@/app/landing/ui";
 import { useBalances } from "@/lib/balances";
 import { useWalletSession } from "@/lib/wallet-context";
 import { getAnalyticsTracker, walletCreationEvents } from "@/lib/analytics";
 import { ReceiveCard } from "./receive-card";
 import { SendPayment } from "./send-payment";
+import { SwapPanel } from "./swap-panel";
 
-// Wallet dashboard ("paper & signals" shell): panel grid — Account overview
-// (balance + details) · My assets · Activity. Send/Receive open as focused
-// panels replacing the grid.
+// Wallet dashboard ("paper & signals" shell, design.md §8): panel grid —
+// Account overview (balance + details) · My assets · Activity. Send/Receive
+// open as focused panels replacing the grid.
 
-type Panel = "grid" | "send" | "receive";
+type Panel = "grid" | "send" | "receive" | "swap";
 
 export default function Dashboard() {
   const session = useWalletSession();
@@ -48,11 +50,16 @@ export default function Dashboard() {
       actions={[
         { label: "Send", onClick: () => setPanel("send"), primary: true },
         { label: "Receive", onClick: () => setPanel("receive") },
+        { label: "Swap", onClick: () => setPanel("swap") },
       ]}
     >
       {panel === "receive" && session && (
         <div className="max-w-[460px]">
-          <ReceiveCard accountId={session.accountId} onClose={() => setPanel("grid")} />
+          <ReceiveCard
+            accountId={session.accountId}
+            network={session.network}
+            onClose={() => setPanel("grid")}
+          />
         </div>
       )}
 
@@ -80,48 +87,76 @@ export default function Dashboard() {
               </p>
             </section>
           )}
+          <Link
+            href="/pay"
+            className="mt-3.5 block font-[family-name:var(--lp-mono)] text-xs font-bold text-[var(--lp-ink-faint)]"
+          >
+            Have a payment request link? Pay it →
+          </Link>
+        </div>
+      )}
+
+      {panel === "swap" && session && (
+        <div className="max-w-[460px]">
+          <button
+            onClick={() => setPanel("grid")}
+            className="mb-3.5 block cursor-pointer font-[family-name:var(--lp-mono)] text-xs font-bold text-[var(--lp-ink-faint)]"
+          >
+            ← Wallet
+          </button>
+          <SwapPanel
+            from={session.accountId}
+            network={session.network}
+            onSuccess={() => void balances.refetch()}
+          />
         </div>
       )}
 
       {panel === "grid" && (
         <div className="grid items-start gap-5 [grid-template-columns:repeat(auto-fit,minmax(280px,1fr))]">
-          {/* Account overview */}
-          <section className="lpa-panel flex flex-col">
-            <Eyebrow>Account balance</Eyebrow>
-            <div className="lpa-balance mt-2.5">
-              {balances.isPending ? (
-                <span className="animate-pulse text-[var(--lp-ink-faint)]">…</span>
-              ) : (
-                <>
-                  {total} <span className="unit">XLM</span>
-                </>
-              )}
-            </div>
-
-            {Boolean(balances.error) && (
-              <div className="mt-3 flex items-center gap-3">
-                <span role="alert" className="lpa-bad text-[13px]">
-                  Couldn&apos;t load balances.
-                </span>
-                <LpActionButton variant="outline" size="sm" onClick={() => void balances.refetch()}>
-                  Retry
-                </LpActionButton>
+          {/* Account overview — the primary panel (design.md §8) */}
+          <Frame className="flex flex-col">
+            <section className="lpa-panel flex flex-1 flex-col">
+              <Eyebrow>Account balance</Eyebrow>
+              <div className="lpa-balance mt-2.5">
+                {balances.isPending ? (
+                  <span className="animate-pulse text-[var(--lp-ink-faint)]">…</span>
+                ) : (
+                  <>
+                    {total} <span className="unit">XLM</span>
+                  </>
+                )}
               </div>
-            )}
 
-            <dl className="lpa-detail mt-6">
-              <DetailRow label="Account name" value={session?.accountId.slice(-8) ?? ""} />
-              <DetailRow
-                label="Public key"
-                value={
-                  session ? `${session.accountId.slice(0, 6)}…${session.accountId.slice(-6)}` : ""
-                }
-                mono
-              />
-              <DetailRow label="Network" value={session?.network ?? ""} />
-              <DetailRow label="Auth method" value="Passkey" />
-            </dl>
-          </section>
+              {Boolean(balances.error) && (
+                <div className="mt-3 flex items-center gap-3">
+                  <span role="alert" className="lpa-bad text-[13px]">
+                    Couldn&apos;t load balances.
+                  </span>
+                  <LpActionButton
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void balances.refetch()}
+                  >
+                    Retry
+                  </LpActionButton>
+                </div>
+              )}
+
+              <dl className="lpa-detail mt-6">
+                <DetailRow label="Account name" value={session?.accountId.slice(-8) ?? ""} />
+                <DetailRow
+                  label="Public key"
+                  value={
+                    session ? `${session.accountId.slice(0, 6)}…${session.accountId.slice(-6)}` : ""
+                  }
+                  mono
+                />
+                <DetailRow label="Network" value={session?.network ?? ""} />
+                <DetailRow label="Auth method" value="Passkey" />
+              </dl>
+            </section>
+          </Frame>
 
           {/* My assets */}
           <section className="lpa-panel min-h-[260px]">

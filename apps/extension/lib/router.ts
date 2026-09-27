@@ -22,7 +22,6 @@ function respond(payload: ResponsePayload, revokeGrant?: boolean): RouteDecision
   return revokeGrant ? { kind: "respond", payload, revokeGrant } : { kind: "respond", payload };
 }
 
-
 export function routeProviderRequest(
   request: ProviderRequest,
   rawOrigin: string,

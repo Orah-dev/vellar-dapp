@@ -11,12 +11,14 @@ import {
   type SessionStatus,
   type WalletConnector,
 } from "vellar-sdk";
-import { createRealConnector, getRealPaymentClient } from "./connector-factory";
+import { createRealConnector, getRealPaymentClient, getRealSwapClient } from "./connector-factory";
+import type { SwapClient } from "./swap/client";
 
 interface WalletContextValue {
   store: ReturnType<typeof createSessionStore>;
   getConnector: () => Promise<WalletConnector>;
   getPayments: () => Promise<PaymentClient>;
+  getSwaps: () => Promise<SwapClient>;
 }
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -25,12 +27,15 @@ export function WalletProvider({
   children,
   connector,
   payments,
+  swaps,
 }: {
   children: ReactNode;
   /** Test seam: inject a fake connector instead of the real PasskeyKit one. */
   connector?: WalletConnector;
   /** Test seam: inject a fake payment client. */
   payments?: PaymentClient;
+  /** Test seam: inject a fake swap client. */
+  swaps?: SwapClient;
 }) {
   const [store] = useState(() =>
     createSessionStore(
@@ -55,8 +60,11 @@ export function WalletProvider({
       getPayments: payments
         ? () => Promise.resolve(payments)
         : () => getRealPaymentClient(store.getState().session?.keyId),
+      getSwaps: swaps
+        ? () => Promise.resolve(swaps)
+        : () => getRealSwapClient(store.getState().session?.keyId),
     }),
-    [store, connector, payments],
+    [store, connector, payments, swaps],
   );
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
@@ -78,6 +86,10 @@ export function useWalletStatus(): SessionStatus {
 
 export function usePaymentClient(): () => Promise<PaymentClient> {
   return useWalletContext().getPayments;
+}
+
+export function useSwapClient(): () => Promise<SwapClient> {
+  return useWalletContext().getSwaps;
 }
 
 export interface WalletActions {

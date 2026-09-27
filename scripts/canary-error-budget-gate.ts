@@ -160,7 +160,10 @@ function parseArgs(argv: string[]): CanaryGateOptions | { error: string } {
   if (windowMs !== undefined && (!Number.isFinite(windowMs) || windowMs < 1)) {
     return { error: "--window-ms must be a positive number" };
   }
-  if (maxErrorRate !== undefined && (!Number.isFinite(maxErrorRate) || maxErrorRate < 0 || maxErrorRate > 1)) {
+  if (
+    maxErrorRate !== undefined &&
+    (!Number.isFinite(maxErrorRate) || maxErrorRate < 0 || maxErrorRate > 1)
+  ) {
     return { error: "--max-error-rate must be between 0 and 1" };
   }
   if (minRequests !== undefined && (!Number.isInteger(minRequests) || minRequests < 0)) {
@@ -206,7 +209,9 @@ async function main() {
       process.exit(1);
     }
   } catch (err) {
-    console.error(`Error: could not scrape ${parsed.url}/metrics — ${err instanceof Error ? err.message : String(err)}`);
+    console.error(
+      `Error: could not scrape ${parsed.url}/metrics — ${err instanceof Error ? err.message : String(err)}`,
+    );
     process.exit(2);
   }
 }

@@ -1,10 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import {
-  extractTraceContext,
-  injectTraceContext,
-  withTraceSpan,
-  TraceCollector,
-} from "./tracing";
+import { extractTraceContext, injectTraceContext, withTraceSpan, TraceCollector } from "./tracing";
 
 describe("distributed tracing module (#301)", () => {
   beforeEach(() => {

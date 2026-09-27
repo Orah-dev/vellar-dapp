@@ -1,10 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  escapeHtml,
-  sanitizeUrl,
-  sanitizeString,
-  sanitizeDAppMetadata,
-} from "./sanitization";
+import { escapeHtml, sanitizeUrl, sanitizeString, sanitizeDAppMetadata } from "./sanitization";
 
 describe("input sanitization helpers (#312)", () => {
   describe("escapeHtml", () => {
@@ -40,9 +35,7 @@ describe("input sanitization helpers (#312)", () => {
 
   describe("sanitizeString", () => {
     it("strips HTML tags and removes control characters", () => {
-      expect(sanitizeString("<img src=x onerror=alert(1)>Malicious")).toBe(
-        "Malicious",
-      );
+      expect(sanitizeString("<img src=x onerror=alert(1)>Malicious")).toBe("Malicious");
       expect(sanitizeString("Clean\x00Name")).toBe("CleanName");
     });
 

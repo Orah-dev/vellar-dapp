@@ -59,10 +59,8 @@ async function main() {
   // Step 4: Create commit
   log("Step 4: Creating commit");
   const commitMessage =
-    'refactor(#348): consolidate origin-validation via permission-service facade';
-  const commitResult = runCommand(
-    `git commit -m "${commitMessage}"`,
-  );
+    "refactor(#348): consolidate origin-validation via permission-service facade";
+  const commitResult = runCommand(`git commit -m "${commitMessage}"`);
   if (commitResult.success) {
     log(`✅ Commit created: ${commitMessage}`);
   } else if (commitResult.output.includes("nothing to commit")) {
@@ -81,9 +79,7 @@ async function main() {
 
   // Step 6: Run extension tests
   log("Step 6: Running extension tests");
-  const extTestResult = runCommand(
-    "pnpm test --filter=@vellar/extension -- --run",
-  );
+  const extTestResult = runCommand("pnpm test --filter=@vellar/extension -- --run");
   if (extTestResult.success) {
     log("✅ Extension tests passed");
     log(extTestResult.output);
@@ -95,9 +91,7 @@ async function main() {
 
   // Step 7: Run permission-service tests
   log("Step 7: Running permission-service tests");
-  const permTestResult = runCommand(
-    "pnpm test --filter=@vellar/permission-service -- --run",
-  );
+  const permTestResult = runCommand("pnpm test --filter=@vellar/permission-service -- --run");
   if (permTestResult.success) {
     log("✅ Permission-service tests passed");
     log(permTestResult.output);

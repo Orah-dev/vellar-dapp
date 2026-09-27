@@ -4,7 +4,7 @@
 
 The transaction submission worker implements an **exactly-once SUBMISSION guarantee** using idempotent processing keyed on transaction ID. This prevents duplicate transaction submissions when the queue delivers the same message multiple times (network retries, worker crashes, visibility timeouts, etc.).
 
-**Important**: This is an exactly-once SUBMISSION overlay on an at-least-once queue. It prevents *duplicate submissions* but does not prevent *duplicate confirmations* — if a transaction is confirmed on-chain twice in rare edge cases, we detect it but cannot undo the first confirmation.
+**Important**: This is an exactly-once SUBMISSION overlay on an at-least-once queue. It prevents _duplicate submissions_ but does not prevent _duplicate confirmations_ — if a transaction is confirmed on-chain twice in rare edge cases, we detect it but cannot undo the first confirmation.
 
 ## Architecture
 
@@ -41,6 +41,7 @@ The worker enforces this atomic sequence to guarantee exactly-once submission:
 The store tracks submission state using a PostgreSQL table: `transaction_submissions`
 
 **Schema:**
+
 ```sql
 CREATE TABLE transaction_submissions (
   transaction_id TEXT PRIMARY KEY,       -- Stellar transaction hash (idempotency key)
@@ -55,12 +56,14 @@ CREATE TABLE transaction_submissions (
 ```
 
 **Status Lifecycle:**
+
 - `submitted` → `processing` (when worker claims it)
 - `processing` → `succeeded` (after on-chain confirmation) OR `failed` (permanent error) OR `submitted` (transient retry)
 - `succeeded` | `failed` → (terminal state, never reclaimed)
 - `processing` → `dead_letter` (if max retries exceeded with transient errors)
 
 **Record Structure (JSONB):**
+
 ```json
 {
   "transactionId": "abc123...",
@@ -96,6 +99,7 @@ All state transitions use atomic SQL to prevent race conditions between concurre
 Errors are classified as **transient** (retryable) or **permanent** (should not retry):
 
 ### Transient Failures (retry with backoff)
+
 - Network timeouts: `TimeoutError`, `ETIMEDOUT`, connection issues
 - Connection errors: `ECONNREFUSED`, `ECONNRESET`, `ENOTFOUND` (DNS)
 - RPC errors: HTTP 429 (rate limit), 5xx, "syncing", "not ready", "temporarily unavailable"
@@ -103,12 +107,14 @@ Errors are classified as **transient** (retryable) or **permanent** (should not 
 - Unknown errors: defaulted to transient (conservative approach)
 
 ### Permanent Failures (no retry)
+
 - Invalid transaction: `sponsor_bad_tx`, `sponsor_simulation_failed`
 - Budget exceeded: `sponsor_fee_too_high`, `sponsor_budget_exceeded`
 - On-chain failure: `tx_failed` (already confirmed on-chain)
 - Bad configuration: `relayer_not_configured`
 
 **Classification Logic:**
+
 ```typescript
 function isTransientSubmissionFailure(error: unknown): boolean {
   if (error instanceof SubmissionError) {
@@ -129,6 +135,7 @@ function isTransientSubmissionFailure(error: unknown): boolean {
 ### What it Provides
 
 The system guarantees that a transaction will be submitted **at most once** to the blockchain during normal operation, even when:
+
 - The queue redelivers the same message multiple times
 - Multiple worker instances receive the same message simultaneously
 - A worker crashes after submission but before acking
@@ -144,11 +151,13 @@ The system guarantees that a transaction will be submitted **at most once** to t
 5. If the IN_FLIGHT record has expired → **potential duplicate submission**
 
 **Probability of duplicate submission is low** because:
+
 - IN_FLIGHT TTL (5 minutes) > expected max submission latency (~2 seconds)
 - IN_FLIGHT TTL > typical queue visibility timeout (~30 seconds)
 - Only occurs if both worker crashes AND TTL expires before redelivery
 
 **Mitigation:**
+
 - Set IN_FLIGHT TTL conservatively above p99 submission latency + redelivery delay
 - Monitor submission latency (target < 2 seconds)
 - Alert on unexpectedly long submissions
@@ -163,6 +172,7 @@ The system guarantees that a transaction will be submitted **at most once** to t
 **Purpose:** Lock expiration for in-flight submissions. If a worker crashes, this TTL allows the message to be safely reprocessed after this delay.
 
 **Calculation:**
+
 - p99 submission latency (estimated): ~2 seconds
 - Queue visibility timeout (assumed): ~30 seconds
 - Redelivery delay buffer: ~1 minute
@@ -170,6 +180,7 @@ The system guarantees that a transaction will be submitted **at most once** to t
 - **Chosen: 5 minutes** (2.5x safety margin)
 
 **[VERIFY] Before deployment:**
+
 1. Monitor actual p99 submission latency in staging
 2. Confirm queue visibility timeout setting
 3. If p99 > 2 minutes, increase TTL to 2 × p99 + visibility_timeout
@@ -180,11 +191,13 @@ The system guarantees that a transaction will be submitted **at most once** to t
 **Purpose:** Retain PROCESSED records to deduplicate redelivered messages. If a message is redelivered days later, we still detect and skip the duplicate.
 
 **Calculation:**
+
 - Queue message retention window (assumed): 24 hours
 - Safety margin: 2x
 - **Chosen: 48 hours**
 
 **[VERIFY] Before deployment:**
+
 1. Check your queue's message retention policy (e.g., SQS maxMessageAge, job queue retention, etc.)
 2. Confirm PROCESSED_TTL_MS ≥ 2 × queue_retention
 3. If your queue retains messages longer, increase PROCESSED_TTL_MS accordingly
@@ -193,6 +206,7 @@ The system guarantees that a transaction will be submitted **at most once** to t
 ### Cleanup Policy
 
 Expired records are cleaned up periodically:
+
 - Processed (succeeded) records: deleted after PROCESSED_TTL expires
 - In-flight (processing) records: deleted after IN_FLIGHT_TTL expires
 - Failed records: **kept indefinitely** for audit/debugging
@@ -208,16 +222,19 @@ Cleanup runs on ~10% of worker ticks to avoid aggressive background scanning.
 **Reasoning:** For financial transactions, the risk of duplicate submission > risk of delayed submission. Better to wait for the store to recover than to submit without idempotency guarantees.
 
 **Behavior:**
+
 - If database is down when checking status → worker throws → message not acked → queue redelivers
 - If database is down when writing IN_FLIGHT → worker throws → message not acked → queue redelivers
 - Worker logs the error and continues polling
 
 **Alternative: Fail Open** (not recommended)
+
 - Submit anyway without idempotency check
 - Log a warning
 - Risk: Duplicate submission if store is down for >IN_FLIGHT_TTL
 
 We chose **fail closed** because:
+
 1. Vellar is a financial product — duplicates are worse than delays
 2. A short store outage is better than a permanent duplicate transaction
 3. The queue will retry, and the store will likely recover by then
@@ -245,12 +262,14 @@ We chose **fail closed** because:
 ### Logs
 
 All logs include:
+
 - Transaction ID (for traceability)
 - Status transition (e.g., "submitted → succeeded")
 - Worker ID (hostname + pid, for multi-instance debugging)
 - Error code and message (if applicable)
 
 Example log output:
+
 ```
 [SubmissionWorker] Processing transaction abc123... (attempt 1)
 [SubmissionWorker] Successfully submitted abc123..., hash: def456...
@@ -264,17 +283,17 @@ Example log output:
 
 ```typescript
 // TTL values (see [VERIFY] notes above)
-export const IN_FLIGHT_TTL_MS = 5 * 60 * 1000;        // 5 minutes
-export const PROCESSED_TTL_MS = 48 * 60 * 60 * 1000;  // 48 hours
+export const IN_FLIGHT_TTL_MS = 5 * 60 * 1000; // 5 minutes
+export const PROCESSED_TTL_MS = 48 * 60 * 60 * 1000; // 48 hours
 
 // Retry/backoff
-export const MAX_SUBMISSION_ATTEMPTS = 3;             // Max claim attempts before dead-letter
+export const MAX_SUBMISSION_ATTEMPTS = 3; // Max claim attempts before dead-letter
 export const EXPONENTIAL_BACKOFF_MS = [0, 1000, 2000]; // Delay per attempt (ms)
 
 // Polling
-export const POLL_IDLE_MS = 5000;                      // Delay when queue empty
-export const POLL_BUSY_MS = 250;                       // Delay when work found
-export const REAP_INTERVAL_MS = 5 * 60 * 1000;         // Cleanup frequency
+export const POLL_IDLE_MS = 5000; // Delay when queue empty
+export const POLL_BUSY_MS = 250; // Delay when work found
+export const REAP_INTERVAL_MS = 5 * 60 * 1000; // Cleanup frequency
 
 // Worker identification
 export const WORKER_ID = `${os.hostname()}-${process.pid}`;
@@ -287,11 +306,13 @@ All can be overridden via environment variables or function parameters.
 The worker is designed as a complement to (not a replacement for) the current synchronous submission endpoint (`POST /wallet/submit`).
 
 ### Current Flow (Synchronous)
+
 ```
 Client → POST /wallet/submit → Synchronous submission → Response (hash or error)
 ```
 
 ### Future Flow (With Worker, Optional)
+
 ```
 Client → POST /wallet/submit-queued → Store in transaction_submissions table → Response (202 Accepted)
          ↓
@@ -322,6 +343,7 @@ All tests use mocked store and submitter to isolate business logic from infrastr
 ### Integration Tests (Optional)
 
 For deployment validation:
+
 1. Spin up test environment with real PostgreSQL and Stellar testnet RPC
 2. Submit a transaction via the worker
 3. Verify idempotent behavior by resubmitting the same signed XDR
@@ -357,7 +379,7 @@ Before deploying the transaction submission worker, verify and document:
 
 ## References
 
-- **Codebase**: 
+- **Codebase**:
   - `services/wallet-service/src/db/pg-tx-store.ts` — Store operations
   - `services/wallet-service/src/submission-error-classifier.ts` — Error classification
   - `services/wallet-service/src/worker/submission-worker.ts` — Worker loop

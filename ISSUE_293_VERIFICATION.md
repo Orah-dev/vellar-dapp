@@ -1,6 +1,7 @@
 # Issue #293 Verification Report
 
 ## Objective
+
 Fix ordering issue in lifecycle cleanup job queue by adding per-account FIFO ordering guarantees, concurrency test, out-of-order detection metric, and documentation.
 
 ## Requirements Verification
@@ -8,6 +9,7 @@ Fix ordering issue in lifecycle cleanup job queue by adding per-account FIFO ord
 ### ✅ Requirement 1: Add partitioning or sequencing to guarantee per-account ordering
 
 **Implemented via**:
+
 - Database schema (`services/lifecycle-service/src/db/schema.ts`):
   - `cleanup_jobs` table with composite index: `(account_id, created_at ASC)`
   - Status lifecycle: queued → processing → completed/failed/dead_letter
@@ -37,6 +39,7 @@ Fix ordering issue in lifecycle cleanup job queue by adding per-account FIFO ord
 **Implemented via** (`services/lifecycle-service/src/worker/loop.test.ts`):
 
 **Test Suite 1: Per-account FIFO ordering** (2 tests)
+
 - `processes jobs for the same account in creation order`
   - Submits 3 jobs for same account
   - Verifies they complete in order: job-1 → job-2 → job-3
@@ -48,12 +51,14 @@ Fix ordering issue in lifecycle cleanup job queue by adding per-account FIFO ord
   - Tests detection logic works
 
 **Test Suite 2: Multi-account parallel processing** (1 test)
+
 - `processes jobs for different accounts in parallel without blocking`
   - 4 jobs across 2 accounts (A and B)
   - Verifies all processed (no serialization across accounts)
   - Ensures cross-account parallelism works
 
 **Test Suite 3: Job failure handling** (2 tests)
+
 - `fails invalid accounts and continues with remaining jobs`
   - Invalid account job fails, valid account job succeeds
   - Verifies batch processing continues after failure
@@ -63,11 +68,13 @@ Fix ordering issue in lifecycle cleanup job queue by adding per-account FIFO ord
   - Verifies error isolation
 
 **Test Suite 4: Out-of-order metric tracking** (1 test)
+
 - `increments out-of-order metric when jobs arrive out of sequence`
   - Jobs arrive in wrong order
   - Metric incremented correctly
 
 **Test Suite 5: Batch claiming** (1 test)
+
 - `claims and processes jobs respecting batch size limit`
   - Verifies batch size parameter is respected
 
@@ -80,12 +87,14 @@ Fix ordering issue in lifecycle cleanup job queue by adding per-account FIFO ord
 **Implemented via** (`services/lifecycle-service/src/worker/metrics.ts`):
 
 Prometheus metrics registered:
+
 - `vela_cleanup_jobs_claimed_total` - Counter, jobs claimed
 - `vela_cleanup_jobs_completed_total` - Counter, jobs completed
 - `vela_cleanup_jobs_failed_total` - Counter, jobs failed
 - **`vela_cleanup_out_of_order_total`** - Counter, out-of-order attempts detected
 
 **Out-of-order detection logic** (`services/lifecycle-service/src/worker/loop.ts`):
+
 - Worker tracks `expectedSequence` per account (Map<accountId, number>)
 - For each job claimed, compares expected vs actual sequence
 - If mismatch detected:
@@ -94,6 +103,7 @@ Prometheus metrics registered:
   - Continues processing (doesn't fail the job)
 
 **What triggers the metric**:
+
 - Job claimed for account A but expected sequence is not 1 (first job)
 - Job claimed out of order (e.g., job-3 before job-2)
 - Multiple workers raced (though `FOR UPDATE SKIP LOCKED` prevents this in DB)
@@ -107,7 +117,7 @@ Prometheus metrics registered:
 
 **Sections provided**:
 
-1. **Executive summary**: 
+1. **Executive summary**:
    - "async cleanup job queue with per-account FIFO ordering guarantees"
 
 2. **Architecture overview**:
@@ -168,22 +178,18 @@ Prometheus metrics registered:
 ### Files Created (13 total)
 
 **Database layer** (5 files):
+
 1. `services/lifecycle-service/src/db/schema.ts` - Drizzle ORM schema
 2. `services/lifecycle-service/src/db/client.ts` - Database connection
 3. `services/lifecycle-service/src/db/job-store.ts` - Interface definition
 4. `services/lifecycle-service/src/db/pg-job-store.ts` - Postgres implementation
 5. `services/lifecycle-service/src/db/migrations/0001_create_cleanup_jobs.sql` - Migration
 
-**Worker service** (3 files):
-6. `services/lifecycle-service/src/worker/loop.ts` - Worker tick logic
-7. `services/lifecycle-service/src/worker/index.ts` - Worker service entry point
-8. `services/lifecycle-service/src/worker/metrics.ts` - Prometheus metrics
+**Worker service** (3 files): 6. `services/lifecycle-service/src/worker/loop.ts` - Worker tick logic 7. `services/lifecycle-service/src/worker/index.ts` - Worker service entry point 8. `services/lifecycle-service/src/worker/metrics.ts` - Prometheus metrics
 
-**Tests** (1 file):
-9. `services/lifecycle-service/src/worker/loop.test.ts` - Concurrency tests (7 tests)
+**Tests** (1 file): 9. `services/lifecycle-service/src/worker/loop.test.ts` - Concurrency tests (7 tests)
 
-**Documentation** (1 file):
-10. `services/lifecycle-service/README.md` - Updated with ordering guarantee docs
+**Documentation** (1 file): 10. `services/lifecycle-service/README.md` - Updated with ordering guarantee docs
 
 ### Files Modified (2 files)
 
@@ -195,6 +201,7 @@ Prometheus metrics registered:
 ## Key Design Decisions
 
 ### 1. Postgres-backed queue over Redis/BullMQ
+
 - ✅ Minimal infrastructure (uses existing Postgres)
 - ✅ Atomic claiming via `FOR UPDATE SKIP LOCKED`
 - ✅ Full audit trail (JSONB record)
@@ -202,18 +209,21 @@ Prometheus metrics registered:
 - ✅ No distributed lock complexity
 
 ### 2. Per-account FIFO via ordering, not explicit locks
+
 - ✅ No global locks needed
 - ✅ Claim query naturally serializes per account
 - ✅ Multi-worker parallelism across accounts
 - ✅ Simple and efficient
 
 ### 3. Out-of-order detection as metric, not blocker
+
 - ✅ Worker continues processing even if out-of-order detected
 - ✅ Metric incremented for observability
 - ✅ Logged for debugging
 - ✅ Doesn't slow down processing
 
 ### 4. Backward compatibility
+
 - ✅ Endpoints work without DATABASE_URL (fallback to sync)
 - ✅ Existing synchronous clients unaffected
 - ✅ Async queue is optional feature
@@ -254,7 +264,7 @@ Prometheus metrics registered:
 
 ## Issue #293 Requirements Met: ✅ ALL 4
 
-1. ✅ **Partitioning/sequencing for per-account ordering**: 
+1. ✅ **Partitioning/sequencing for per-account ordering**:
    - Composite index (account_id, created_at)
    - Claim query orders by both
    - No global serialization

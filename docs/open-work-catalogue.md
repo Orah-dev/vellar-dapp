@@ -57,12 +57,12 @@ externally** — flagged below.
 
 Resolved on 2026-09-25 (Issue #413): `packages/policy-sdk` and `packages/lifecycle-sdk` stubs were deleted. Policy support lives natively on the `vellar-sdk` wallet handle (`wallet.policies`) per the 2026-07-22 decision, and the web app interacts directly with `lifecycle-service` without requiring a redundant SDK layer. Unused entries were removed from `apps/web/next.config.ts`, clearing the docs-site blocker.
 
-| Package                     | State                                                                                                                                                                   |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/policy-sdk`       | **Deleted** — folded into `vellar-sdk` wallet handle (`wallet.policies`).                                                                                               |
-| `packages/lifecycle-sdk`    | **Deleted** — direct web-to-service communication; no standalone SDK needed.                                                                                            |
-| `packages/verification-sdk` | Real: 237 lines + tests.                                                                                                                                                |
-| `packages/ui`               | Real — a 2-line barrel re-exporting a tested `TrustBadge`, used by both the web app and the extension popup.                                                            |
+| Package                     | State                                                                                                        |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `packages/policy-sdk`       | **Deleted** — folded into `vellar-sdk` wallet handle (`wallet.policies`).                                    |
+| `packages/lifecycle-sdk`    | **Deleted** — direct web-to-service communication; no standalone SDK needed.                                 |
+| `packages/verification-sdk` | Real: 237 lines + tests.                                                                                     |
+| `packages/ui`               | Real — a 2-line barrel re-exporting a tested `TrustBadge`, used by both the web app and the extension popup. |
 
 ---
 

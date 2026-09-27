@@ -37,12 +37,12 @@ describe("createAnalyticsTracker", () => {
 
       const events = tracker.getQueue();
       expect(events).toHaveLength(1);
-      expect(events[0].name).toBe("test.event");
-      expect(events[0].properties).toEqual({ prop: "value" });
-      expect(events[0].context.network).toBe("testnet");
-      expect(events[0].context.pageSessionId).toBe(tracker.pageSessionId);
+      expect(events[0]!.name).toBe("test.event");
+      expect(events[0]!.properties).toEqual({ prop: "value" });
+      expect(events[0]!.context.network).toBe("testnet");
+      expect(events[0]!.context.pageSessionId).toBe(tracker.pageSessionId);
 
-      const eventTime = new Date(events[0].context.timestamp);
+      const eventTime = new Date(events[0]!.context.timestamp);
       expect(eventTime.getTime()).toBeGreaterThanOrEqual(before.getTime());
       expect(eventTime.getTime()).toBeLessThanOrEqual(new Date().getTime());
     });
@@ -53,7 +53,7 @@ describe("createAnalyticsTracker", () => {
       tracker.emit("test.event", {}, { network: "mainnet", contractId: "C123" });
 
       const events = tracker.getQueue();
-      const event = events[0];
+      const event = events[0]!;
 
       expect(event.context).toMatchObject({
         network: "mainnet",
@@ -69,7 +69,7 @@ describe("createAnalyticsTracker", () => {
       tracker.emit("test.event", undefined, { network: "testnet" });
 
       const events = tracker.getQueue();
-      expect(events[0].properties).toBeUndefined();
+      expect(events[0]!.properties).toBeUndefined();
     });
 
     it("allows events without context", () => {
@@ -78,7 +78,7 @@ describe("createAnalyticsTracker", () => {
       tracker.emit("test.event", { prop: "value" });
 
       const events = tracker.getQueue();
-      const event = events[0];
+      const event = events[0]!;
       expect(event.context.pageSessionId).toBe(tracker.pageSessionId);
       expect(event.context.timestamp).toBeDefined();
     });
@@ -92,10 +92,12 @@ describe("createAnalyticsTracker", () => {
 
       await tracker.flush();
 
-      const stored = JSON.parse(localStorage.getItem("vellar.analytics.events") || "[]") as AnalyticsEvent[];
+      const stored = JSON.parse(
+        localStorage.getItem("vellar.analytics.events") || "[]",
+      ) as AnalyticsEvent[];
       expect(stored).toHaveLength(2);
-      expect(stored[0].name).toBe("test.event1");
-      expect(stored[1].name).toBe("test.event2");
+      expect(stored[0]!.name).toBe("test.event1");
+      expect(stored[1]!.name).toBe("test.event2");
     });
 
     it("drains the event queue after flushing", async () => {
@@ -114,10 +116,12 @@ describe("createAnalyticsTracker", () => {
       tracker.emit("new.event", {}, {});
       await tracker.flush();
 
-      const stored = JSON.parse(localStorage.getItem("vellar.analytics.events") || "[]") as AnalyticsEvent[];
+      const stored = JSON.parse(
+        localStorage.getItem("vellar.analytics.events") || "[]",
+      ) as AnalyticsEvent[];
       expect(stored).toHaveLength(2);
-      expect(stored[0].name).toBe("old.event");
-      expect(stored[1].name).toBe("new.event");
+      expect(stored[0]!.name).toBe("old.event");
+      expect(stored[1]!.name).toBe("new.event");
     });
 
     it("keeps only the last 1000 events in localStorage", async () => {
@@ -132,11 +136,13 @@ describe("createAnalyticsTracker", () => {
       }
       await tracker.flush();
 
-      const stored = JSON.parse(localStorage.getItem("vellar.analytics.events") || "[]") as AnalyticsEvent[];
+      const stored = JSON.parse(
+        localStorage.getItem("vellar.analytics.events") || "[]",
+      ) as AnalyticsEvent[];
       expect(stored).toHaveLength(1000);
       // First 50 old events should be dropped, newest 950 old + 50 new remain
-      expect(stored[0].name).toBe("event.50");
-      expect(stored[999].name).toBe("new.event.49");
+      expect(stored[0]!.name).toBe("event.50");
+      expect(stored[999]!.name).toBe("new.event.49");
     });
 
     it("is a no-op if queue is empty", async () => {
@@ -273,7 +279,7 @@ describe("Wallet creation funnel events", () => {
 
       walletCreationEvents.walletCreated(
         { network: "mainnet", hasUsername: true },
-        { contractId: "C123", sessionId: "hashed-session-id" }
+        { contractId: "C123", sessionId: "hashed-session-id" },
       );
 
       const queue = globalTracker.getQueue();
@@ -296,7 +302,7 @@ describe("Wallet creation funnel events", () => {
 
       walletCreationEvents.walletCreated(
         { network: "testnet", hasUsername: false },
-        { contractId: "C123", sessionId: rawSessionId }
+        { contractId: "C123", sessionId: rawSessionId },
       );
 
       const queue = globalTracker.getQueue();
@@ -304,7 +310,7 @@ describe("Wallet creation funnel events", () => {
 
       // The raw session ID should never appear (assuming it's hashed by the caller)
       // In this test, we're checking that the event structure allows hashing
-      expect(queue[0].context.sessionId).toBe(rawSessionId);
+      expect(queue[0]!.context.sessionId).toBe(rawSessionId);
       // Caller responsibility: must hash before passing. This test verifies event captures it.
     });
   });
@@ -316,7 +322,7 @@ describe("Wallet creation funnel events", () => {
 
       walletCreationEvents.creationFailed(
         { failureReason: "User cancelled passkey prompt", step: "passkey" },
-        { network: "testnet" }
+        { network: "testnet" },
       );
 
       const queue = globalTracker.getQueue();
@@ -336,10 +342,7 @@ describe("Wallet creation funnel events", () => {
       // Caller must sanitize: pass user-safe error message, not raw error with sensitive data
       const userSafeMessage = "Failed to create wallet. Please try again.";
 
-      walletCreationEvents.creationFailed(
-        { failureReason: userSafeMessage, step: "backend" },
-        {}
-      );
+      walletCreationEvents.creationFailed({ failureReason: userSafeMessage, step: "backend" }, {});
 
       const queue = globalTracker.getQueue();
       const event = queue.find((e) => e.name === "wallet.creation.failed");
@@ -376,10 +379,7 @@ describe("Wallet creation funnel events", () => {
       const globalTracker = getAnalyticsTracker();
       globalTracker.getQueue().splice(0);
 
-      walletCreationEvents.funnelAbandoned(
-        { step: "passkey_prompt" },
-        { network: "testnet" }
-      );
+      walletCreationEvents.funnelAbandoned({ step: "passkey_prompt" }, { network: "testnet" });
 
       const queue = globalTracker.getQueue();
       const event = queue.find((e) => e.name === "wallet.funnel.abandoned");
@@ -437,7 +437,7 @@ describe("Sign-in (connect wallet) events", () => {
 
       walletSignInEvents.signinCompleted(
         { network: "testnet" },
-        { contractId: "C456", sessionId: "hashed-signin-id" }
+        { contractId: "C456", sessionId: "hashed-signin-id" },
       );
 
       const queue = globalTracker.getQueue();
@@ -485,7 +485,7 @@ describe("Privacy and security constraints", () => {
     // doesn't do any automatic hashing of sessionId property
     walletCreationEvents.walletCreated(
       { network: "testnet", hasUsername: false },
-      { sessionId: rawSessionId } // Caller should pass hashed value
+      { sessionId: rawSessionId }, // Caller should pass hashed value
     );
 
     const queue = globalTracker.getQueue();
@@ -500,7 +500,8 @@ describe("Privacy and security constraints", () => {
     const globalTracker = getAnalyticsTracker();
 
     const sensitiveData = {
-      seedPhrase: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+      seedPhrase:
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
       privateKey: "0x1234567890abcdef",
       password: "SuperSecret123!",
     };
@@ -508,7 +509,7 @@ describe("Privacy and security constraints", () => {
     // Caller must ensure NO sensitive data in failure reasons, properties, or context
     walletCreationEvents.creationFailed(
       { failureReason: "Wallet creation failed", step: "backend" },
-      { network: "testnet" } // No sensitive data here
+      { network: "testnet" }, // No sensitive data here
     );
 
     const queue = globalTracker.getQueue();
@@ -528,7 +529,7 @@ describe("Privacy and security constraints", () => {
 
     walletCreationEvents.walletCreated(
       { network: "testnet", hasUsername: false },
-      { contractId: publicContractId }
+      { contractId: publicContractId },
     );
 
     const queue = globalTracker.getQueue();
@@ -543,7 +544,7 @@ describe("Privacy and security constraints", () => {
 
     walletCreationEvents.walletCreated(
       { network: "mainnet", hasUsername: true },
-      { network: "mainnet" }
+      { network: "mainnet" },
     );
 
     const queue = globalTracker.getQueue();
@@ -557,10 +558,7 @@ describe("Privacy and security constraints", () => {
     const globalTracker = getAnalyticsTracker();
     globalTracker.getQueue().splice(0);
 
-    walletCreationEvents.walletCreated(
-      { network: "testnet", hasUsername: true },
-      {}
-    );
+    walletCreationEvents.walletCreated({ network: "testnet", hasUsername: true }, {});
 
     const queue = globalTracker.getQueue();
     const event = queue.find((e) => e.name === "wallet.created");

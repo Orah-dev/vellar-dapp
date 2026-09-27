@@ -149,6 +149,7 @@ export function circuitBreakerLimitsFromEnv(
       Number.isFinite(failureThreshold) && failureThreshold > 0
         ? failureThreshold
         : defaults.defaultFailureThreshold,
-    cooldownMs: Number.isFinite(cooldownMs) && cooldownMs > 0 ? cooldownMs : defaults.defaultCooldownMs,
+    cooldownMs:
+      Number.isFinite(cooldownMs) && cooldownMs > 0 ? cooldownMs : defaults.defaultCooldownMs,
   };
 }

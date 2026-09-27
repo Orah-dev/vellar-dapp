@@ -201,7 +201,11 @@ describe("POST /verification/submit", () => {
         throw new Error("queue down");
       },
     };
-    app = buildServer({ records, queue: failingQueue, x402FacilitatorClient: fakeFacilitatorClient() });
+    app = buildServer({
+      records,
+      queue: failingQueue,
+      x402FacilitatorClient: fakeFacilitatorClient(),
+    });
     const res = await app.inject({
       method: "POST",
       url: "/verification/submit",
@@ -253,7 +257,11 @@ describe("POST /verification/submit — queue controls (M7)", () => {
 
   it("queue-depth cap: rejects (429) once active records reach maxActiveQueue", async () => {
     const records = createMemoryVerificationRepository();
-    app = buildServer({ records, maxActiveQueue: 2, x402FacilitatorClient: fakeFacilitatorClient() });
+    app = buildServer({
+      records,
+      maxActiveQueue: 2,
+      x402FacilitatorClient: fakeFacilitatorClient(),
+    });
     // Two distinct contracts fill the queue to the cap.
     expect((await submit(app, C1)).statusCode).toBe(201);
     expect((await submit(app, C2)).statusCode).toBe(201);
@@ -288,7 +296,11 @@ describe("GET /verification/:contractId", () => {
   it.skip("returns the full history newest-first", async () => {
     const records = createMemoryVerificationRepository();
     let clock = 1000;
-    app = buildServer({ records, now: () => new Date(clock), x402FacilitatorClient: fakeFacilitatorClient() });
+    app = buildServer({
+      records,
+      now: () => new Date(clock),
+      x402FacilitatorClient: fakeFacilitatorClient(),
+    });
 
     const first = await app.inject({
       method: "POST",
@@ -461,5 +473,75 @@ describe("x402 public resource URL guard (docs/decisions.md — localhost catalo
       "https://vellar-backend.onrender.com/verification/:contractId",
     );
     expect(challenge.resource.url).not.toContain("localhost");
+  });
+});
+
+describe("VerificationRepository.listPage (issue #263)", () => {
+  function record(overrides: Partial<VerificationRecordInternal>): VerificationRecordInternal {
+    return {
+      id: overrides.id ?? "id",
+      contractId: overrides.contractId ?? C1,
+      sourceType: "repo",
+      toolchainVersion: "1.0.0",
+      status: overrides.status ?? "verified",
+      createdAt: overrides.createdAt ?? new Date().toISOString(),
+      updatedAt: overrides.updatedAt ?? overrides.createdAt ?? new Date().toISOString(),
+      ...overrides,
+    };
+  }
+
+  it("filters by status", async () => {
+    const records = createMemoryVerificationRepository();
+    await records.insert(record({ id: "r1", status: "verified", createdAt: "2024-01-01T00:00:00.000Z" }));
+    await records.insert(record({ id: "r2", status: "failed", createdAt: "2024-01-02T00:00:00.000Z" }));
+
+    const page = await records.listPage({ status: "verified", limit: 10 });
+    expect(page.records.map((r) => r.id)).toEqual(["r1"]);
+  });
+
+  it("paginates newest-first with no skip or duplicate across pages", async () => {
+    const records = createMemoryVerificationRepository();
+    for (let i = 0; i < 5; i++) {
+      await records.insert(
+        record({ id: `r${i}`, createdAt: `2024-01-0${i + 1}T00:00:00.000Z` }),
+      );
+    }
+
+    const seen: string[] = [];
+    let after: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const result = await records.listPage({ limit: 2, after });
+      expect(result.records.length).toBeLessThanOrEqual(2);
+      seen.push(...result.records.map((r) => r.id));
+      if (!result.hasMore) {
+        expect(result.nextCursor).toBeUndefined();
+        break;
+      }
+      expect(result.nextCursor).toBeDefined();
+      after = result.nextCursor;
+    }
+    expect(seen).toEqual(["r4", "r3", "r2", "r1", "r0"]);
+  });
+
+  it("rejects a malformed cursor rather than returning an arbitrary page", async () => {
+    const records = createMemoryVerificationRepository();
+    await expect(records.listPage({ limit: 10, after: "not-a-real-cursor" })).rejects.toThrow();
+  });
+
+  it("returns an empty page (not an error) when nothing matches", async () => {
+    const records = createMemoryVerificationRepository();
+    const page = await records.listPage({ status: "verified", limit: 10 });
+    expect(page).toEqual({ records: [], hasMore: false, nextCursor: undefined });
+  });
+
+  it("caps at limit even when more records exist and reports hasMore", async () => {
+    const records = createMemoryVerificationRepository();
+    for (let i = 0; i < 3; i++) {
+      await records.insert(record({ id: `r${i}`, createdAt: `2024-01-0${i + 1}T00:00:00.000Z` }));
+    }
+    const page = await records.listPage({ limit: 2 });
+    expect(page.records).toHaveLength(2);
+    expect(page.hasMore).toBe(true);
+    expect(page.nextCursor).toBeDefined();
   });
 });

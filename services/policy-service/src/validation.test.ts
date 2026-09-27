@@ -18,23 +18,31 @@ const spendingPolicy = {
   spendingLimits: { dailyXlm: "100", perTxXlm: "25" },
 };
 
+const CONSTRUCTOR_ARGS = { dailyLimitStroops: "1000000000", windowSeconds: 86400 };
+
 /**
  * Helper to create a minimal PolicyRecord for testing.
  */
-function createRecord(
-  overrides?: Partial<PolicyRecord>,
-): PolicyRecord {
+function createRecord(overrides?: Partial<PolicyRecord>): PolicyRecord {
   const base: PolicyRecord = {
     id: "test-policy",
     createdAt: new Date().toISOString(),
     status: "generated",
+    definition: {
+      version: "1",
+      type: "spending_limit",
+      owners: [C1],
+      spendingLimits: { dailyXlm: "100" },
+    },
     policyHash: "hash123",
     manifest: {
+      template: "spending_limit",
       enforcement: {
         kind: "policy-contract",
         wasmHash: "wasm123",
-        constructorArgs: { dailyLimitStroops: "1000000000", windowSeconds: 86400 },
+        constructorArgs: CONSTRUCTOR_ARGS,
       },
+      network: "testnet",
     },
   };
   return { ...base, ...overrides };
@@ -51,9 +59,11 @@ describe("validatePolicyForDeployment", () => {
   it("rejects policies not enforced by a contract", () => {
     const record = createRecord({
       manifest: {
+        template: "spending_limit",
         enforcement: {
           kind: "signer-limits",
         },
+        network: "testnet",
       },
     });
     const result = validatePolicyForDeployment(record);
@@ -64,10 +74,12 @@ describe("validatePolicyForDeployment", () => {
   it("rejects policies with contract enforcement but no constructor args", () => {
     const record = createRecord({
       manifest: {
+        template: "spending_limit",
         enforcement: {
           kind: "policy-contract",
           wasmHash: "wasm123",
         },
+        network: "testnet",
       },
     });
     const result = validatePolicyForDeployment(record);

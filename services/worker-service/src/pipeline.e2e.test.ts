@@ -6,6 +6,7 @@ import {
   createNoopBuildJobQueue,
   fakeFacilitatorClient,
   toPublic,
+  type VerificationRecordInternal,
   type VerificationRepository,
 } from "@vellar/verification-service/server";
 import { stubBuildExecutor } from "./executor";
@@ -180,7 +181,7 @@ describe("verify contract source — full pipeline (idea.md §15)", () => {
     const history = await app.inject({ method: "GET", url: `/verification/${C_MISMATCH}` });
     expect(history.statusCode).toBe(402);
 
-    const [stored] = await records.findByContract(C_MISMATCH);
+    const [stored] = (await records.findByContract(C_MISMATCH)) as [VerificationRecordInternal];
     expect(stored.status).toBe("failed");
     expect(stored.deployedHash).toBe("d".repeat(64));
     expect(stored.outputHash).toBeTruthy();
@@ -188,7 +189,7 @@ describe("verify contract source — full pipeline (idea.md §15)", () => {
     // Public API exposes the sanitized statusDetail, not the raw log (H3/FIX 6).
     const record = toPublic(stored);
     expect(record.statusDetail).toContain("does not match");
-    expect((record as Record<string, unknown>).log).toBeUndefined();
+    expect((record as unknown as Record<string, unknown>).log).toBeUndefined();
   });
 
   it("a contract that can't be resolved on-chain fails with a clear reason (no build)", async () => {
@@ -211,9 +212,9 @@ describe("verify contract source — full pipeline (idea.md §15)", () => {
     const history = await app.inject({ method: "GET", url: `/verification/${C_MATCH}` });
     expect(history.statusCode).toBe(402);
 
-    const [stored] = await records.findByContract(C_MATCH);
+    const [stored] = (await records.findByContract(C_MATCH)) as [VerificationRecordInternal];
     const record = toPublic(stored);
     expect(record.statusDetail).toContain("Could not resolve");
-    expect((record as Record<string, unknown>).log).toBeUndefined();
+    expect((record as unknown as Record<string, unknown>).log).toBeUndefined();
   });
 });

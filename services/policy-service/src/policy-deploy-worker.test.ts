@@ -6,9 +6,9 @@ import {
   processDeploymentJob,
 } from "./policy-deploy-worker";
 import { createMemoryDLQStore } from "./dlq-store";
-import { createMemoryPolicyRepository } from "./server";
+import { createMemoryPolicyRepository, type PolicyRecord } from "./server";
 import type { PolicyDeployer, DeployPolicyInstanceInput } from "./deploy";
-import type { DLQMetrics } from "./policy-deploy-worker";
+import type { DeployJob, DLQMetrics } from "./policy-deploy-worker";
 
 describe("Policy Deployment Worker", () => {
   let jobStore: InMemoryDeployJobStore;
@@ -100,8 +100,8 @@ describe("Policy Deployment Worker", () => {
       // Entry should be in DLQ
       const dlqList = await dlqStore.list();
       expect(dlqList.entries).toHaveLength(1);
-      expect(dlqList.entries[0].original_job_id).toBe("job-1");
-      expect(dlqList.entries[0].failure_count).toBe(MAX_RETRIES + 1);
+      expect(dlqList.entries[0]!.original_job_id).toBe("job-1");
+      expect(dlqList.entries[0]!.failure_count).toBe(MAX_RETRIES + 1);
 
       // Metrics should be incremented
       expect(dlqMetrics.dlq_enqueue_total.inc).toHaveBeenCalledWith({
@@ -127,12 +127,12 @@ describe("Policy Deployment Worker", () => {
       await jobStore.handleFailure("job-1", error, dlqStore, dlqMetrics);
 
       const dlqList = await dlqStore.list();
-      const dlqId = dlqList.entries[0].id;
+      const dlqId = dlqList.entries[0]!.id;
 
       const auditTrail = await dlqStore.getAuditTrail(dlqId);
       expect(auditTrail).toHaveLength(1);
-      expect(auditTrail[0].event_type).toBe("dlq_move");
-      expect(auditTrail[0].metadata.original_job_id).toBe("job-1");
+      expect(auditTrail[0]!.event_type).toBe("dlq_move");
+      expect(auditTrail[0]!.metadata.original_job_id).toBe("job-1");
     });
 
     it("handles concurrent failures safely", async () => {
@@ -181,7 +181,7 @@ describe("Policy Deployment Worker", () => {
       await jobStore.handleFailure("job-1", error, dlqStore, dlqMetrics);
 
       const dlqList = await dlqStore.list();
-      const errorMessage = dlqList.entries[0].last_error;
+      const errorMessage = dlqList.entries[0]!.last_error;
 
       // Contract address should be redacted
       expect(errorMessage).toContain("[contract]");
@@ -212,7 +212,7 @@ describe("Policy Deployment Worker", () => {
     });
 
     it("updates last_failed_at on subsequent failures", async () => {
-      const job = {
+      const job: DeployJob = {
         id: "job-1",
         policy_id: "policy-1",
         wallet: "CWALLET",
@@ -276,6 +276,67 @@ describe("Policy Deployment Worker", () => {
 
       const depth = await dlqStore.depth();
       expect(depth).toBe(3);
+    });
+  });
+
+  describe("processDeploymentJob", () => {
+    const WALLET = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+    const OWNER = "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67";
+    const ARGS = { dailyLimitStroops: "1000000000", windowSeconds: 86400 };
+
+    function seedPolicy(enforcement: PolicyRecord["manifest"]["enforcement"]) {
+      return policyRepo.insert({
+        id: "policy-1",
+        createdAt: new Date().toISOString(),
+        status: "generated",
+        definition: {
+          version: "1",
+          type: "spending_limit",
+          owners: [OWNER],
+          spendingLimits: { dailyXlm: "100" },
+        },
+        policyHash: "hash",
+        manifest: { template: "spending_limit", enforcement, network: "testnet" },
+      });
+    }
+
+    function seedJob() {
+      const now = new Date().toISOString();
+      jobStore.addJob({
+        id: "job-1",
+        policy_id: "policy-1",
+        wallet: WALLET,
+        network: "testnet",
+        status: "pending",
+        retry_count: 0,
+        created_at: now,
+        updated_at: now,
+      });
+    }
+
+    it("deploys with the constructor args from the policy manifest", async () => {
+      await seedPolicy({ kind: "policy-contract", wasmHash: "wasm", constructorArgs: ARGS });
+      seedJob();
+
+      await processDeploymentJob(jobStore, policyRepo, deployer, dlqStore, dlqMetrics);
+
+      expect(deployer.deployInstance).toHaveBeenCalledWith({
+        wallet: WALLET,
+        constructorArgs: ARGS,
+      });
+      expect((await jobStore.get("job-1"))?.status).toBe("completed");
+    });
+
+    it("fails the job without deploying when the policy is not contract-enforced", async () => {
+      await seedPolicy({ kind: "signer-limits" });
+      seedJob();
+
+      await processDeploymentJob(jobStore, policyRepo, deployer, dlqStore, dlqMetrics);
+
+      expect(deployer.deployInstance).not.toHaveBeenCalled();
+      const job = await jobStore.get("job-1");
+      expect(job?.status).not.toBe("completed");
+      expect(job?.last_error).toMatch(/not contract-enforced/);
     });
   });
 });

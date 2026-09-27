@@ -27,7 +27,11 @@ function wasmEntry(hashHex: string): Awaited<ReturnType<rpc.Server["getContractD
 describe("createRpcArtifactResolver — timeout handling (issue #330)", () => {
   it("resolves normally well within the timeout", async () => {
     const server = { getContractData: vi.fn().mockResolvedValue(wasmEntry("ab".repeat(32))) };
-    const resolver = createRpcArtifactResolver({ rpcUrl: "https://example.test", server, timeoutMs: 50 });
+    const resolver = createRpcArtifactResolver({
+      rpcUrl: "https://example.test",
+      server,
+      timeoutMs: 50,
+    });
     await expect(resolver.resolveDeployedHash(C1)).resolves.toBe("ab".repeat(32));
   });
 
@@ -38,7 +42,11 @@ describe("createRpcArtifactResolver — timeout handling (issue #330)", () => {
         () => new Promise<Awaited<ReturnType<rpc.Server["getContractData"]>>>(() => {}),
       ),
     };
-    const resolver = createRpcArtifactResolver({ rpcUrl: "https://example.test", server, timeoutMs: 20 });
+    const resolver = createRpcArtifactResolver({
+      rpcUrl: "https://example.test",
+      server,
+      timeoutMs: 20,
+    });
 
     const err = await resolver.resolveDeployedHash(C1).catch((e) => e);
     expect(err).toBeInstanceOf(ArtifactResolveError);
@@ -61,7 +69,11 @@ describe("createRpcArtifactResolver — timeout handling (issue #330)", () => {
     const server = {
       getContractData: vi.fn().mockRejectedValue(new Error("upstream 500")),
     };
-    const resolver = createRpcArtifactResolver({ rpcUrl: "https://example.test", server, timeoutMs: 1000 });
+    const resolver = createRpcArtifactResolver({
+      rpcUrl: "https://example.test",
+      server,
+      timeoutMs: 1000,
+    });
     const err = await resolver.resolveDeployedHash(C1).catch((e) => e);
     expect(err).toBeInstanceOf(ArtifactResolveError);
     expect((err as ArtifactResolveError).code).toBe("rpc_error");
@@ -71,7 +83,11 @@ describe("createRpcArtifactResolver — timeout handling (issue #330)", () => {
     const server = {
       getContractData: vi.fn().mockRejectedValue(new Error("could not be found")),
     };
-    const resolver = createRpcArtifactResolver({ rpcUrl: "https://example.test", server, timeoutMs: 1000 });
+    const resolver = createRpcArtifactResolver({
+      rpcUrl: "https://example.test",
+      server,
+      timeoutMs: 1000,
+    });
     const err = await resolver.resolveDeployedHash(C1).catch((e) => e);
     expect(err).toBeInstanceOf(ArtifactResolveError);
     expect((err as ArtifactResolveError).code).toBe("not_found");

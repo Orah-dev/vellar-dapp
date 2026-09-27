@@ -14,9 +14,14 @@ import { walletErrorMessage } from "@/lib/messages";
 import { useRevokeSession, useSessions } from "@/lib/sessions";
 import { useWalletActions, useWalletSession } from "@/lib/wallet-context";
 import { useAgentKeys, useRevokeAgentKey } from "@/lib/agent-keys";
+import { AddPasskeyCard } from "./add-passkey-card";
+import { AgentKeysCard } from "./agent-keys-card";
+import { ProvenanceCard } from "./provenance-card";
+import { SignersCard } from "./signers-card";
 
-// Account settings ("paper & signals" shell): session/device management +
-// extension pairing.
+// Account settings ("paper & signals" shell): signer management (#401),
+// agent keys (#394), verified-provenance signing (#398), extension pairing
+// and server-side device sessions.
 
 export default function Settings() {
   const session = useWalletSession();
@@ -54,6 +59,10 @@ export default function Settings() {
       <div className="flex max-w-[720px] flex-col gap-5">
         <h1>Settings</h1>
 
+        {session && <SignersCard session={session} />}
+        {session && <AddPasskeyCard session={session} />}
+        {session && <AgentKeysCard session={session} />}
+        {session && <ProvenanceCard session={session} />}
         {session && <ExtensionPairingCard session={session} />}
 
         <section className="lpa-panel">
@@ -119,7 +128,8 @@ export default function Settings() {
         <section className="lpa-panel">
           <Eyebrow>Agent session keys</Eyebrow>
           <p className="mt-2! text-xs text-[var(--lp-ink-faint)]">
-            Autonomous agent keys authorized to pay under on-chain budgets (§17.3). Revocation removes the key on-chain as a remote kill switch.
+            Autonomous agent keys authorized to pay under on-chain budgets (§17.3). Revocation
+            removes the key on-chain as a remote kill switch.
           </p>
 
           {agentKeys.isPending && (
@@ -142,7 +152,9 @@ export default function Settings() {
           {agentKeys.data && (
             <ul className="mt-3.5 flex list-none flex-col gap-2.5 p-0">
               {agentKeys.data.length === 0 && (
-                <li className="text-sm text-[var(--lp-ink-faint)]">No agent keys authorized yet.</li>
+                <li className="text-sm text-[var(--lp-ink-faint)]">
+                  No agent keys authorized yet.
+                </li>
               )}
               {agentKeys.data.map((key) => {
                 const isActive = key.status === "active";
@@ -162,8 +174,8 @@ export default function Settings() {
                           isActive
                             ? "bg-[var(--lp-mint-soft)] text-[var(--lp-mint-dark)]"
                             : isExpired
-                            ? "bg-amber-100 text-amber-800"
-                            : "bg-red-100 text-red-700"
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-red-100 text-red-700"
                         }`}
                       >
                         {key.status}
@@ -185,7 +197,9 @@ export default function Settings() {
                       </div>
                       <div>
                         <span className="block text-[var(--lp-ink-faint)]">Expires:</span>
-                        <span>{key.expiresAt ? new Date(key.expiresAt).toLocaleDateString() : "Never"}</span>
+                        <span>
+                          {key.expiresAt ? new Date(key.expiresAt).toLocaleDateString() : "Never"}
+                        </span>
                       </div>
                     </div>
 
@@ -253,7 +267,7 @@ function ExtensionPairingCard({ session }: { session: WalletSession }) {
       <p className="mt-2! text-xs leading-relaxed text-[var(--lp-ink-faint)]">
         Pair the Vellar extension as a device signer: it can approve dApp transactions for 7 days,
         then expires automatically. You approve the pairing in the extension, then confirm with your
-        passkey.
+        passkey. Paired devices appear in the signer list above as device sessions.
       </p>
 
       {detected === false && (

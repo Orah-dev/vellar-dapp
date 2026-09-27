@@ -32,6 +32,7 @@ scraper can watch it. In the `all-in-one` process, scrape the gateway's
 
 **Standardized Metrics Naming Convention (Issue #300):**
 All custom application metrics adhere to `vela_<subsystem>_<metric_name>_<unit_or_type>`:
+
 - `<subsystem>`: identifies service component (`http`, `wallet`, `policy`, `worker`, `lifecycle`, `rpc`).
 - `<metric_name>`: snake_case identifier (`created`, `passkey_auth`, `poison_messages`, etc.).
 - `<unit_or_type>`: `_total` (counters), `_seconds` (durations/turnaround), `_depth` (queue sizes), `_lag_seconds` (processing lag).
@@ -41,8 +42,8 @@ All custom application metrics adhere to `vela_<subsystem>_<metric_name>_<unit_o
 | Metric                                        | Emitted by        | §13 line / Subsystem              |
 | --------------------------------------------- | ----------------- | --------------------------------- |
 | `vela_wallet_created_total`                   | wallet-service    | wallet creation success rate      |
-| `vela_wallet_passkey_auth_total`             | wallet-service    | passkey auth success/failure rate |
-| `vela_wallet_tx_signed_total`                | wallet-service    | tx signing completion rate        |
+| `vela_wallet_passkey_auth_total`              | wallet-service    | passkey auth success/failure rate |
+| `vela_wallet_tx_signed_total`                 | wallet-service    | tx signing completion rate        |
 | `vela_policy_deployed_total`                  | policy-service    | policy generation/deploy rate     |
 | `vela_policy_poison_messages_total`           | policy-service    | event queue poison message count  |
 | `vela_worker_verification_total`              | worker-service    | verification outcomes             |
@@ -50,7 +51,7 @@ All custom application metrics adhere to `vela_<subsystem>_<metric_name>_<unit_o
 | `vela_lifecycle_cleanup_completed_total`      | lifecycle-service | cleanup completion rate           |
 | `vela_rpc_errors_total{upstream}`             | wallet + worker   | RPC degradation / worker failures |
 | `vela_worker_queue_depth`                     | worker-service    | queue depth (pending jobs)        |
-| `vela_worker_processing_lag_seconds`         | worker-service    | submit-to-pickup processing lag   |
+| `vela_worker_processing_lag_seconds`          | worker-service    | submit-to-pickup processing lag   |
 
 A "rate" is computed in the query layer, e.g. success rate over 5m:
 
@@ -151,6 +152,7 @@ vela_worker_processing_lag_seconds{service="worker-service"}
 End-to-end trace visibility across service boundaries during policy generation and deployment flows is captured using OpenTelemetry-compatible trace spans via `@vellar/service-kit`:
 
 ### Trace Propagation Flow
+
 1. **API Gateway (`api-gateway`)**: Injects or extracts `x-trace-id`, `x-span-id`, and W3C `traceparent` headers on incoming HTTP requests and proxies them to downstream services.
 2. **Policy Service (`policy-service`)**: Extracts trace context from headers and wraps policy generation and deployment operations in `withTraceSpan("policy-service", "policy.deploy-instance", traceCtx)`. Propagates `traceId` with queued verification and deployment jobs.
 3. **Worker Service (`worker-service`)**: Extracts `traceId` from claimed deployment jobs and executes verification in `withTraceSpan("worker-service", "policy.execute", traceCtx)`.
@@ -162,13 +164,22 @@ Trace spans are recorded in `TraceCollector` and exportable to OpenTelemetry APM
 The following events are emitted via `logEvent()` for operational search and
 analytics:
 
-| Event Name | Emitted By | Trigger | Properties |
-|---|---|---|---|
+| Event Name        | Emitted By     | Trigger                                                       | Properties                                                                                                                                   |
+| ----------------- | -------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `policy.deployed` | policy-service | Successful policy template deployment (POST /policies/deploy) | `policyId` (string), `templateType` (string, e.g. "spending_limit"), `walletId` (string, Soroban address), `deployedAt` (ISO 8601 timestamp) |
 
 Example log line (JSON):
+
 ```json
-{"level":"info","time":"2026-08-29T10:30:00.000Z","event":"policy.deployed","policyId":"550e8400-e29b-41d4-a716-446655440000","templateType":"spending_limit","walletId":"CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67","deployedAt":"2026-08-29T10:30:00.000Z"}
+{
+  "level": "info",
+  "time": "2026-08-29T10:30:00.000Z",
+  "event": "policy.deployed",
+  "policyId": "550e8400-e29b-41d4-a716-446655440000",
+  "templateType": "spending_limit",
+  "walletId": "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67",
+  "deployedAt": "2026-08-29T10:30:00.000Z"
+}
 ```
 
 ## Recommended alert rules (§13 Alerting)

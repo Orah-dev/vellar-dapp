@@ -82,7 +82,8 @@ describe("Cache Metrics", () => {
 
     it("accumulates misses and hits separately", async () => {
       const mockCache: CacheOperation = {
-        get: vi.fn()
+        get: vi
+          .fn()
           .mockResolvedValueOnce({ hit: true, value: "data" })
           .mockResolvedValueOnce({ hit: false })
           .mockResolvedValueOnce({ hit: true, value: "data" }),
@@ -173,7 +174,8 @@ describe("Cache Metrics", () => {
 
     it("tracks hits/misses across different resources independently", async () => {
       const mockCache: CacheOperation = {
-        get: vi.fn()
+        get: vi
+          .fn()
           .mockResolvedValueOnce({ hit: true, value: "data1" }) // balance hit
           .mockResolvedValueOnce({ hit: false }) // nonce miss
           .mockResolvedValueOnce({ hit: true, value: "data2" }) // tx-history hit

@@ -11,6 +11,7 @@
 ## 1. Module Creation ✓
 
 ### validation.ts
+
 - **Location**: `src/validation.ts`
 - **Size**: ~100 LOC
 - **Exports**:
@@ -22,6 +23,7 @@
 - **Status**: ✓ Complete
 
 ### deployment.ts
+
 - **Location**: `src/deployment.ts`
 - **Size**: ~230 LOC
 - **Exports**:
@@ -33,6 +35,7 @@
 - **Status**: ✓ Complete
 
 ### server.ts (Refactored)
+
 - **Location**: `src/server.ts`
 - **Size**: ~280 LOC (down from 300+ in original)
 - **Role**: Thin HTTP coordinator
@@ -50,12 +53,14 @@
 ## 2. Logic Classification ✓
 
 ### Validation Module
+
 - Input schema validation (Zod)
 - Policy definition validation (delegated to templates)
 - Record state validation (enforceability, instance checks)
 - No deployment orchestration
 
 ### Deployment Module
+
 - Sponsor budget consumption
 - Instance provisioning (deployer calls)
 - L1 attach verification (verifyAttachTx)
@@ -65,6 +70,7 @@
 - No validation logic
 
 ### Controller (Thin Coordinator)
+
 - Route registration
 - Zod parsing
 - Module calls
@@ -76,6 +82,7 @@
 ## 3. Tests ✓
 
 ### validation.test.ts
+
 - **Tests**: 30+
 - **Coverage**:
   - `validatePolicyForDeployment()` - contract enforcement, constructor args checks
@@ -84,6 +91,7 @@
 - **Status**: ✓ Complete
 
 ### deployment.test.ts
+
 - **Tests**: 20+
 - **Coverage**:
   - `simulatePolicyDeploy()` - basic simulation, success/failure paths
@@ -92,6 +100,7 @@
 - **Status**: ✓ Complete
 
 ### server.test.ts (Extended)
+
 - **Existing tests**: All preserved, unchanged
 - **New tests**: 3 coordinator integration tests
   - End-to-end: generate → deploy-instance → deploy flow
@@ -104,17 +113,20 @@
 ## 4. Interface Preservation ✓
 
 ### HTTP API
+
 - All endpoints unchanged: `/policies/templates`, `/policies/validate`, `/policies/generate`, `/policies/simulate`, `/policies/deploy-instance`, `/policies/deploy`, `/policies/:id`
 - All status codes preserved: 201 (created), 400 (bad request), 404 (not found), 422 (unprocessable), 503 (unavailable), 502 (bad gateway), 200 (ok)
 - All response shapes preserved
 - All error codes preserved
 
 ### buildServer() Signature
+
 - Unchanged: `buildServer(deps: PolicyServiceDeps = {}): FastifyInstance`
 - All dependencies flow the same way
 - Backward compatible
 
 ### PolicyRepository
+
 - Interface unchanged: `insert()`, `find()`, `update()`
 - Shared infrastructure, used by all concerns
 - Explicit parameter passing to modules
@@ -124,6 +136,7 @@
 ## 5. Data Flow Verification ✓
 
 ### /policies/generate
+
 1. Parse request body (validation module schema)
 2. Validate policy definition (validation module)
 3. Generate policy (templates module)
@@ -131,6 +144,7 @@
 5. Return 201 + record
 
 ### /policies/simulate
+
 1. Parse request body (validation module schema)
 2. Load record (repo)
 3. Validate policy deployability (validation module)
@@ -138,6 +152,7 @@
 5. Return result
 
 ### /policies/deploy-instance
+
 1. Parse request body (validation module schema)
 2. Load record (repo)
 3. Check idempotency (record.instance)
@@ -146,6 +161,7 @@
 6. Return 200 + updated record
 
 ### /policies/deploy
+
 1. Parse request body (validation module schema)
 2. Load record (repo)
 3. Validate instance exists (if verify enabled) (validation module)
@@ -157,19 +173,23 @@
 ## 6. Error Propagation Verification ✓
 
 ### Budget Errors
+
 - Budget.tryConsume() throws → caught as "fail closed" → 503
 - Budget.tryConsume() returns ok:false → 503
 
 ### Deploy Errors
+
 - PolicyDeployError thrown → caught, 502 with error.code
 - Other errors from deployer → propagated to caller
 
 ### Verification Errors
+
 - AttachUnconfirmedError → 503 (retryable)
 - AttachMismatchError → 422 (definite lie)
 - No instance when verify enabled → 422
 
 ### All Original Behaviors Preserved
+
 - Idempotent instance deploy (second call returns existing)
 - Fail-closed budget consumption
 - Error metrics recording
@@ -180,14 +200,16 @@
 ## 7. Shared State Analysis ✓
 
 ### PolicyRepository
+
 - Shared by validation (generate inserts), deployment (deploy updates), and queries (GET)
 - Explicit parameter passing: `deploymentDeps.policies`
 - No implicit shared mutable state
 
 ### Deps Flow
+
 - `PolicyServiceDeps` (server.ts input)
 - → `DeploymentDeps` (deployment module parameter)
-- + `Zod schemas` (validation module exports)
+- - `Zod schemas` (validation module exports)
 - No circular dependencies
 
 ---
@@ -273,8 +295,9 @@ services/policy-service/src/
 **Status**: ✓ **COMPLETE AND VERIFIED**
 
 The refactor successfully splits the policy-service controller into:
+
 1. **validation.ts** - Pure validation logic, 30+ tests
-2. **deployment.ts** - Orchestration logic, 20+ tests  
+2. **deployment.ts** - Orchestration logic, 20+ tests
 3. **server.ts** - Thin HTTP coordinator, 30+ existing tests + 3 integration tests
 
 All original behavior preserved. No breaking changes. All acceptance criteria met.

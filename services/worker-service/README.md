@@ -45,24 +45,24 @@ does not fail the entire claim.
 All validation rules are defined in `src/import-validation.ts` using Zod ^4.0.0
 (the same version used in `verification-service`). The rules cover:
 
-| Field | Required | Type | Rules |
-|---|---|---|---|
-| `id` | ✅ | string | non-empty |
-| `contractId` | ✅ | string | matches `/^C[A-Z2-7]{55}$/` (Soroban C… address) |
-| `sourceType` | ✅ | string | must be `"repo"` or `"upload"` |
-| `repoUrl` | ❌ | string | required if sourceType="repo", must be a valid URL |
-| `commitHash` | ❌ | string | required if sourceType="repo", matches `/^[0-9a-fA-F]{7,40}$/` (git sha) |
-| `sourceArchiveRef` | ❌ | string | required if sourceType="upload", non-empty |
-| `toolchainVersion` | ✅ | string | non-empty |
-| `buildFlags` | ❌ | array | each element is a string |
-| `lockfileHash` | ❌ | string | non-empty if present |
-| `outputHash` | ❌ | string | matches `/^[0-9a-f]{64}$/` if present (lowercase hex sha256) |
-| `deployedHash` | ❌ | string | matches `/^[0-9a-f]{64}$/` if present (lowercase hex sha256) |
-| `status` | ✅ | string | one of: `"unverified"`, `"submitted"`, `"building"`, `"verified"`, `"failed"`, `"dead_letter"` |
-| `createdAt` | ✅ | string | valid ISO 8601 timestamp |
-| `updatedAt` | ✅ | string | valid ISO 8601 timestamp, must be ≥ createdAt |
-| `log` | ❌ | string | optional; the build log appears only on terminal records |
-| `statusDetail` | ❌ | string | optional; public sanitized detail appears only on terminal records |
+| Field              | Required | Type   | Rules                                                                                          |
+| ------------------ | -------- | ------ | ---------------------------------------------------------------------------------------------- |
+| `id`               | ✅       | string | non-empty                                                                                      |
+| `contractId`       | ✅       | string | matches `/^C[A-Z2-7]{55}$/` (Soroban C… address)                                               |
+| `sourceType`       | ✅       | string | must be `"repo"` or `"upload"`                                                                 |
+| `repoUrl`          | ❌       | string | required if sourceType="repo", must be a valid URL                                             |
+| `commitHash`       | ❌       | string | required if sourceType="repo", matches `/^[0-9a-fA-F]{7,40}$/` (git sha)                       |
+| `sourceArchiveRef` | ❌       | string | required if sourceType="upload", non-empty                                                     |
+| `toolchainVersion` | ✅       | string | non-empty                                                                                      |
+| `buildFlags`       | ❌       | array  | each element is a string                                                                       |
+| `lockfileHash`     | ❌       | string | non-empty if present                                                                           |
+| `outputHash`       | ❌       | string | matches `/^[0-9a-f]{64}$/` if present (lowercase hex sha256)                                   |
+| `deployedHash`     | ❌       | string | matches `/^[0-9a-f]{64}$/` if present (lowercase hex sha256)                                   |
+| `status`           | ✅       | string | one of: `"unverified"`, `"submitted"`, `"building"`, `"verified"`, `"failed"`, `"dead_letter"` |
+| `createdAt`        | ✅       | string | valid ISO 8601 timestamp                                                                       |
+| `updatedAt`        | ✅       | string | valid ISO 8601 timestamp, must be ≥ createdAt                                                  |
+| `log`              | ❌       | string | optional; the build log appears only on terminal records                                       |
+| `statusDetail`     | ❌       | string | optional; public sanitized detail appears only on terminal records                             |
 
 Unknown extra fields in the jsonb are silently ignored (forward-compatible with
 future schema extensions).
@@ -241,12 +241,38 @@ behavior exactly.
   matching toolchain. A metadata-tolerant comparison (normalize the
   `contractmetav0` `rsver`/`rssdkver`/`cliver` stamp) would widen this — a Phase 7
   nice-to-have, no longer a blocker for OUR contracts.
-- The Docker build runs with **`--network=none`** (hermetic — no mid-build
-  fetches, required for determinism). A repo whose dependencies aren't vendored
-  or pre-fetched will fail the build under network isolation. Vendoring /
-  lockfile-pinned dependency pre-fetch is Phase 7 work.
+- Submissions need a committed `Cargo.lock` whose dependencies come only from
+  crates.io or public https git (pinned commit, no submodules). Anything else
+  fails with `dependencies_unresolved` before a build starts — see
+  "Hermetic dependency pre-fetch" below.
 - A multi-contract workspace emits several wasms; such submissions must set
   `expectedWasmPath` to disambiguate (the resolver refuses to guess).
+
+## Hermetic dependency pre-fetch (#420)
+
+The build container has no network, so dependencies are fetched first, on the
+host, from `Cargo.lock` only (`src/cargo-prefetch.ts`):
+
+- crates.io packages come from `index.crates.io` / `static.crates.io`, each
+  connection pinned to an address `repo-url-guard` validated, and every crate is
+  checked against the lockfile sha256;
+- git dependencies go through the same guard, IP pin, redirect block and
+  https-only protocol list as the repo clone;
+- any other source is refused. There is no networked fallback: a pre-fetch
+  failure ends the job before a container starts.
+
+The build then runs `stellar contract build --locked` with the deps mounted
+read-only at `/deps` (cargo local-registry + git mirrors). Public `statusDetail`
+gets the failure code plus fixed hint text; details stay in the private log.
+Design and threat model: `docs/design-hermetic-verification-builds.md`.
+
+The real-Docker isolation suite (outbound probe blocked, offline builds, the
+Soroban workspace reproducing its deployed hash) runs with the image:
+
+```bash
+VERIFY_BUILD_IMAGE=vela-verify:1.94.0 pnpm --filter @vellar/worker-service \
+  exec vitest run src/hermetic-build.integration.test.ts
+```
 
 ## Build sandbox (§8.4)
 
@@ -280,6 +306,7 @@ Each consumer group:
 ### Current groups
 
 **Verification group** (`verification`):
+
 - Processes contract verification jobs from the `verification_records` table
 - Handles artifact download, WASM verification, attestation submission
 - Concurrency controlled by `WORKER_CONCURRENCY` (default: 1)
@@ -314,7 +341,7 @@ process transaction jobs and vice versa.
 | `DATABASE_URL`            | shared verification store (REQUIRED — worker exits without it) | —       |
 | `VERIFY_BUILD_IMAGE`      | toolchain image → real Docker builds; unset → stub             | unset   |
 | `STELLAR_RPC_URL`         | RPC for reading the deployed wasm hash                         | testnet |
-| `VERIFY_RPC_TIMEOUT_MS`   | cap on the RPC round-trip; a timeout is retried, not failed     | 10000   |
+| `VERIFY_RPC_TIMEOUT_MS`   | cap on the RPC round-trip; a timeout is retried, not failed    | 10000   |
 | `VERIFY_POLL_IDLE_MS`     | poll interval when the queue is idle                           | 5000    |
 | `VERIFY_BUILD_TIMEOUT_S`  | kill a build after this many seconds                           | 600     |
 | `VERIFY_BUILD_MEMORY`     | container memory cap (docker `--memory`)                       | 2g      |

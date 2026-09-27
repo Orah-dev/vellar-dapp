@@ -1,7 +1,7 @@
 /**
  * Policy deployment worker: claims failed deployment jobs, retries with backoff,
  * and moves jobs to DLQ when retry count exceeds maxRetries.
- * 
+ *
  * Key responsibility:
  * - Atomically increment retry_count on failure
  * - Move to DLQ when retry_count > MAX_RETRIES
@@ -61,6 +61,8 @@ export interface DeployJobStore {
 export interface DLQMetrics {
   dlq_enqueue_total: { inc(labels: { job_type: string }): void };
   dlq_depth_gauge: { set(value: number): void };
+  /** Incremented by the admin requeue route. */
+  dlq_requeue_total?: { inc(labels: { job_type: string }): void };
 }
 
 export class InMemoryDeployJobStore implements DeployJobStore {
@@ -188,9 +190,13 @@ export async function processDeploymentJob(
       throw new Error(`Policy not found: ${job.policy_id}`);
     }
 
+    const enforcement = policy.manifest.enforcement;
+    if (enforcement.kind !== "policy-contract" || !enforcement.constructorArgs) {
+      throw new Error(`Policy is not contract-enforced: ${job.policy_id}`);
+    }
     const result = await deployer.deployInstance({
       wallet: job.wallet,
-      constructorArgs: policy.constructorArgs,
+      constructorArgs: enforcement.constructorArgs,
     });
 
     await jobStore.markCompleted(job.id, result.contractId, result.txHash);

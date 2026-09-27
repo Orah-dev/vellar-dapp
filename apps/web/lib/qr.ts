@@ -1,0 +1,33 @@
+import qrcode from "qrcode-generator";
+
+// Local QR encoding. The payload (a wallet address or SEP-7 URI) never leaves
+// the device — no third-party QR service is involved.
+
+/** Dark-module matrix for `payload` (row-major, true = dark). */
+export function qrMatrix(payload: string): boolean[][] {
+  // The default byte mode maps each UTF-16 unit to one byte, so anything
+  // outside ASCII would be silently corrupted. Addresses and percent-encoded
+  // SEP-7 URIs are always ASCII; refuse anything else loudly.
+  if (!/^[\x20-\x7e]+$/.test(payload)) {
+    throw new Error("QR payload must be non-empty printable ASCII");
+  }
+  // Level M (~15% recovery) keeps long SEP-7 URIs scannable at a modest size.
+  const qr = qrcode(0, "M");
+  qr.addData(payload, "Byte");
+  qr.make();
+  const size = qr.getModuleCount();
+  return Array.from({ length: size }, (_, r) =>
+    Array.from({ length: size }, (_, c) => qr.isDark(r, c)),
+  );
+}
+
+/** One SVG path covering every dark module, offset by a quiet zone of `margin` modules. */
+export function qrPath(matrix: boolean[][], margin: number): string {
+  let d = "";
+  matrix.forEach((row, r) =>
+    row.forEach((dark, c) => {
+      if (dark) d += `M${c + margin} ${r + margin}h1v1h-1z`;
+    }),
+  );
+  return d;
+}

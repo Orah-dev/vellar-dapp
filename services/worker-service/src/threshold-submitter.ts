@@ -60,7 +60,10 @@ export class ThresholdKeyManager {
    * Signs a 32-byte payload hash using the first `requiredCount` signers,
    * sorted by strictly ascending `signer_index`.
    */
-  signPayload(payloadHash: Buffer, requiredCount: number): Array<{ signerIndex: number; signature: Buffer }> {
+  signPayload(
+    payloadHash: Buffer,
+    requiredCount: number,
+  ): Array<{ signerIndex: number; signature: Buffer }> {
     if (requiredCount > this.signers.length) {
       throw new Error(
         `Cannot produce ${requiredCount} signatures with only ${this.signers.length} configured signers`,
@@ -136,7 +139,7 @@ export function createThresholdSubmitter(
   }
 
   async function invokeWithThreshold(
-    method: "upsert" | "revoke",
+    method: "upsert" | "upsert_with_publisher" | "revoke",
     args: xdr.ScVal[],
   ): Promise<{ latencyMs: number }> {
     const startTime = Date.now();
@@ -173,10 +176,7 @@ export function createThresholdSubmitter(
 
     // Hash of the authorization entry payload according to Soroban host specs
     const payloadHash = hash(
-      Buffer.concat([
-        Buffer.from(options.networkPassphrase),
-        preEntry.toXDR(),
-      ]),
+      Buffer.concat([Buffer.from(options.networkPassphrase), preEntry.toXDR()]),
     );
 
     // Collect threshold signatures
@@ -260,6 +260,23 @@ export function createThresholdSubmitter(
       await invokeWithThreshold("upsert", [
         nativeToScVal(contractId, { type: "address" }),
         nativeToScVal(hashBuf, { type: "bytes" }),
+        nativeToScVal(expiresLedger, { type: "u32" }),
+      ]);
+    },
+
+    async upsertWithPublisher(contractId, wasmHashHex, publisherIdHex, expiresLedger) {
+      const hashBuf = Buffer.from(wasmHashHex, "hex");
+      if (hashBuf.length !== 32) {
+        throw new Error(`attested wasm hash must be 32 bytes, got ${hashBuf.length}`);
+      }
+      const publisher = Buffer.from(publisherIdHex, "hex");
+      if (publisher.length !== 32) {
+        throw new Error(`publisher id must be 32 bytes, got ${publisher.length}`);
+      }
+      await invokeWithThreshold("upsert_with_publisher", [
+        nativeToScVal(contractId, { type: "address" }),
+        nativeToScVal(hashBuf, { type: "bytes" }),
+        nativeToScVal(publisher, { type: "bytes" }),
         nativeToScVal(expiresLedger, { type: "u32" }),
       ]);
     },

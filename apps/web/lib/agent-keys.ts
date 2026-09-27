@@ -18,7 +18,9 @@ export interface AgentKeyRecord {
 // while authoritative existence and revocation are strictly verified on-chain.
 const AGENT_KEYS_METADATA_KEY = "vellar:agent_keys:meta";
 
-export function getLocalAgentKeysMetadata(accountId: string): Record<string, Partial<AgentKeyRecord>> {
+export function getLocalAgentKeysMetadata(
+  accountId: string,
+): Record<string, Partial<AgentKeyRecord>> {
   if (typeof window === "undefined") return {};
   try {
     const raw = window.localStorage.getItem(`${AGENT_KEYS_METADATA_KEY}:${accountId}`);
@@ -37,10 +39,7 @@ export function saveAgentKeyMetadata(
   try {
     const current = getLocalAgentKeysMetadata(accountId);
     current[publicKey] = { ...current[publicKey], ...meta };
-    window.localStorage.setItem(
-      `${AGENT_KEYS_METADATA_KEY}:${accountId}`,
-      JSON.stringify(current),
-    );
+    window.localStorage.setItem(`${AGENT_KEYS_METADATA_KEY}:${accountId}`, JSON.stringify(current));
   } catch {
     // Ignore storage quota errors
   }
