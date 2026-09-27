@@ -74,6 +74,31 @@ export const spendLedger = pgTable(
   (table) => [index("spend_ledger_line_network_at_idx").on(table.line, table.network, table.at)],
 );
 
+// Sponsored-submission replay reservations (issue #416). One row per
+// address-credential auth entry that /wallet/submit has accepted for funding:
+// the PRIMARY KEY (network, address, nonce) is the replay identity and the
+// concurrency arbiter — a concurrent duplicate INSERT blocks on the unique index
+// until the first commits, then conflicts, so at most one caller can reserve a
+// nonce even under READ COMMITTED. Rows are dead once the chain passes
+// expiration_ledger (the auth signature can no longer validate) and are purged
+// against the current ledger; see src/replay.ts.
+export const submissionReplay = pgTable(
+  "submission_replay",
+  {
+    network: text("network").notNull(),
+    address: text("address").notNull(),
+    // Int64 nonce as its exact decimal string.
+    nonce: text("nonce").notNull(),
+    // u32 on the wire; bigint so no value can overflow a signed int4.
+    expirationLedger: bigint("expiration_ledger", { mode: "number" }).notNull(),
+    reservedAt: timestamp("reserved_at", { withTimezone: true, mode: "date" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.network, table.address, table.nonce] }),
+    index("submission_replay_expiration_idx").on(table.network, table.expirationLedger),
+  ],
+);
+
 // Transaction submission queue for exactly-once processing (Issue #291).
 // Implements idempotent submission with transient retry-with-backoff and dead-letter tracking.
 // Status lifecycle: submitted → processing → succeeded/failed/dead_letter.

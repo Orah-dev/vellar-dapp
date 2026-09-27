@@ -26,6 +26,8 @@
     {
       "idx": 3,
       "version": "7",
+      "when": 1790380800000,
+      "tag": "0003_submission_replay",
       "when": 1790454546710,
       "tag": "0003_add_activity_logs_actor_column",
       "breakpoints": true

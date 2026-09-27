@@ -103,6 +103,10 @@ export interface VerificationRecord {
   buildFlags?: string[];
   outputHash?: string;
   deployedHash?: string;
+  /** How a verified record matched: "exact" (byte-for-byte) or
+   * "toolchain-metadata" (identical except contractmetav0 rsver/rssdkver/cliver;
+   * third-party contracts only, issue #419). */
+  matchMode?: "exact" | "toolchain-metadata";
   status: VerificationStatus;
   createdAt: string;
   updatedAt: string;

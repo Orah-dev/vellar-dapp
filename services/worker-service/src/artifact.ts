@@ -26,3 +26,16 @@ export function normalizeHash(hash: string): string {
 export function hashesMatch(a: string, b: string): boolean {
   return normalizeHash(a) === normalizeHash(b) && normalizeHash(a).length > 0;
 }
+
+/** The hash an attestation vouches for: the DEPLOYED artifact whose code was
+ * verified. For an exact match that is the rebuilt hash (they are equal). For a
+ * toolchain-metadata match (issue #419) the rebuilt bytes never exist on-chain,
+ * so attesting — or sweeping against — the rebuilt hash would be revoked on the
+ * next sweep; the deployed hash is what the chain can be checked against. */
+export function attestedHash(record: {
+  matchMode?: "exact" | "toolchain-metadata";
+  outputHash?: string;
+  deployedHash?: string;
+}): string | undefined {
+  return record.matchMode === "toolchain-metadata" ? record.deployedHash : record.outputHash;
+}

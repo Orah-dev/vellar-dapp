@@ -1,9 +1,11 @@
 import type { VerificationStatus } from "@vellar/types";
-import { hashesMatch } from "./artifact";
+import { hashArtifact, hashesMatch, normalizeHash } from "./artifact";
 import { BuildExecutorError, type BuildExecutor, type BuildInput } from "./executor";
 import { ArtifactResolveError, type ContractArtifactResolver } from "./resolver";
 import { isTransientFailure, type ErrorClassification } from "./error-classification";
 import { calculateBackoffDelay, BACKOFF_CONFIG } from "./backoff";
+import { compareWasm } from "./wasm-compare";
+import { isFirstPartyContract } from "./first-party";
 
 // The verification pipeline (technical-doc.md §7.6): given a job, rebuild the
 // contract, resolve the deployed wasm hash, and compare. This module is the
@@ -28,6 +30,10 @@ export interface VerificationOutcome {
   outputHash?: string;
   /** The on-chain deployed wasm hash (absent if it couldn't be resolved). */
   deployedHash?: string;
+  /** How a verified outcome matched (issue #419): "exact" = byte-for-byte;
+   * "toolchain-metadata" = identical except the contractmetav0 toolchain stamps
+   * (rsver/rssdkver/cliver) — third-party contracts only. Absent on failure. */
+  matchMode?: "exact" | "toolchain-metadata";
   /** PUBLIC, sanitized one-line status returned by the verification API — a
    * short reason with NO raw build/clone output, host paths, or resolved IPs
    * (security-audit.md H3/FIX 6). Safe to expose unauthenticated. */
@@ -167,25 +173,114 @@ export async function runVerification(
     throw err;
   }
 
-  // 3. Compare. Byte-identical rebuild ⇒ verified; anything else ⇒ failed.
-  const matched = hashesMatch(build.wasmHash, deployedHash);
-  return {
-    status: matched ? "verified" : "failed",
+  // 3. Compare. Byte-identical rebuild ⇒ verified ("exact").
+  if (hashesMatch(build.wasmHash, deployedHash)) {
+    return {
+      status: "verified",
+      matchMode: "exact",
+      outputHash: build.wasmHash,
+      deployedHash,
+      statusDetail: "Rebuilt artifact matches the deployed wasm hash.",
+      log: `Verified: rebuilt artifact matches the deployed wasm hash.\n\n${build.log}`,
+      isRetryable: false, // Verification success — never retry
+      retryAttempt,
+    };
+  }
+
+  const mismatch = (reason: string, statusDetail: string): VerificationOutcome => ({
+    status: "failed",
     outputHash: build.wasmHash,
     deployedHash,
-    statusDetail: matched
-      ? "Rebuilt artifact matches the deployed wasm hash."
-      : "Rebuilt artifact does not match the deployed contract.",
-    log: matched
-      ? `Verified: rebuilt artifact matches the deployed wasm hash.\n\n${build.log}`
-      : [
-          "Mismatch: the rebuilt artifact does not match the deployed contract.",
-          `  rebuilt:  ${build.wasmHash}`,
-          `  deployed: ${deployedHash}`,
-          "",
-          build.log,
-        ].join("\n"),
-    isRetryable: false, // Verification success or permanent failure — never retry
+    statusDetail,
+    log: [
+      "Mismatch: the rebuilt artifact does not match the deployed contract.",
+      `  rebuilt:  ${build.wasmHash}`,
+      `  deployed: ${deployedHash}`,
+      `  reason:   ${reason}`,
+      "",
+      build.log,
+    ].join("\n"),
+    isRetryable: false, // permanent — never retry
+    retryAttempt,
+  });
+
+  // 4. First-party contracts stay byte-for-byte (2026-07-20 binding rule):
+  //    they are built AND deployed through the canonical image, so any
+  //    difference means the deployed artifact is not the canonical build.
+  if (isFirstPartyContract({ repoUrl: job.repoUrl, deployedHash })) {
+    return mismatch(
+      "first-party contracts must match the canonical build byte-for-byte",
+      "Rebuilt artifact does not match the deployed contract.",
+    );
+  }
+
+  // 5. Third-party: accept a difference ONLY in the contractmetav0 toolchain
+  //    stamps (wasm-compare.ts documents exactly which fields and why). Needs
+  //    the deployed bytes; a resolver that cannot supply them keeps the
+  //    byte-for-byte verdict.
+  if (!deps.resolver.fetchDeployedWasm) {
+    return mismatch("byte-for-byte only", "Rebuilt artifact does not match the deployed contract.");
+  }
+  let deployedWasm: Uint8Array;
+  try {
+    deployedWasm = await deps.resolver.fetchDeployedWasm(deployedHash);
+  } catch (err) {
+    if (err instanceof ArtifactResolveError) {
+      if (err.code === "timeout") throw err; // transient: leave "building" (#330)
+      const isTransient = isTransientFailure(err);
+      const outcome: VerificationOutcome = {
+        status: "failed",
+        outputHash: build.wasmHash,
+        deployedHash,
+        statusDetail: `Could not fetch the deployed wasm (${err.code}).`,
+        log: `Could not fetch the deployed wasm for comparison: ${err.message} (${err.code}).`,
+        isRetryable: isTransient,
+        retryAttempt,
+      };
+      if (isTransient) {
+        outcome.retryDelayMs = calculateBackoffDelay(retryAttempt, baseDelayMs, maxDelayMs);
+      }
+      return outcome;
+    }
+    throw err;
+  }
+
+  // The bytes compared must be the bytes the reported outputHash describes.
+  if (hashArtifact(build.wasm) !== normalizeHash(build.wasmHash)) {
+    return mismatch(
+      "rebuilt bytes do not hash to the reported rebuilt hash",
+      "Rebuilt artifact does not match the deployed contract.",
+    );
+  }
+  const comparison = compareWasm(build.wasm, deployedWasm);
+  if (comparison.match === "none") {
+    return mismatch(comparison.reason, "Rebuilt artifact does not match the deployed contract.");
+  }
+  // "exact" here would mean the bytes are equal but the hashes were not — the
+  // executor's wasmHash does not describe its wasm. Refuse rather than guess.
+  if (comparison.match === "exact") {
+    return mismatch(
+      "rebuilt bytes match but the reported rebuilt hash does not",
+      "Rebuilt artifact does not match the deployed contract.",
+    );
+  }
+  return {
+    status: "verified",
+    matchMode: "toolchain-metadata",
+    outputHash: build.wasmHash,
+    deployedHash,
+    statusDetail:
+      "Rebuilt artifact matches the deployed contract; only toolchain version metadata differs.",
+    log: [
+      "Verified (toolchain metadata normalized): every code, data, and interface section is",
+      "byte-identical; only these contractmetav0 toolchain stamps differ:",
+      `  ${comparison.normalizedKeys.join(", ")}`,
+      `  rebuilt:  ${build.wasmHash}`,
+      `  deployed: ${deployedHash}`,
+      "",
+      build.log,
+    ].join("\n"),
+    isRetryable: false,
     retryAttempt,
   };
 }

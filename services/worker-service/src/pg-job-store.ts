@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { verificationRecords } from "@vellar/verification-service/db-schema";
 import type { VerificationRecordInternal } from "@vellar/verification-service/server";
+import { attestedHash } from "./artifact";
 import { calculateBackoffDelay } from "./backoff";
 import type { ClaimedJob, ReapResult, VerificationJobStore } from "./job-store";
 import { validateImportedRecord, toClaimedJob } from "./import-validation";
@@ -100,6 +101,7 @@ export function createPgJobStore(
         status: result.status,
         outputHash: result.outputHash,
         deployedHash: result.deployedHash,
+        matchMode: result.matchMode,
         // Private full log (operators) + public sanitized statusDetail (H3/FIX 6).
         log: result.log,
         statusDetail: result.statusDetail,
@@ -223,8 +225,9 @@ export function createPgJobStore(
       const result: Array<{ contractId: string; outputHash: string }> = [];
       for (const row of rows.rows as Array<{ contract_id: string; record: unknown }>) {
         const record = row.record as VerificationRecordInternal;
-        if (record.outputHash) {
-          result.push({ contractId: row.contract_id, outputHash: record.outputHash });
+        const hash = attestedHash(record);
+        if (hash) {
+          result.push({ contractId: row.contract_id, outputHash: hash });
         }
       }
       return result;

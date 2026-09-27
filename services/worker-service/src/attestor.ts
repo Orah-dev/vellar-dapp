@@ -1,6 +1,7 @@
 import { publisherIdFor } from "@vellar/service-kit";
 import type { ContractArtifactResolver } from "./resolver";
 import { ArtifactResolveError } from "./resolver";
+import { attestedHash } from "./artifact";
 import type { VerificationOutcome } from "./verify";
 
 // The attestor: mirrors verification outcomes into the on-chain
@@ -101,13 +102,15 @@ export function createAttestor(deps: AttestorDeps): Attestor {
     async reportOutcome(contractId, outcome, source) {
       try {
         if (outcome.status === "verified") {
-          if (!outcome.outputHash) {
-            // A verified outcome always carries the rebuilt hash today; guard
-            // anyway — attesting without a hash would be an empty claim.
+          const hash = attestedHash(outcome);
+          if (!hash) {
+            // A verified outcome always carries its hash today; guard anyway —
+            // attesting without a hash would be an empty claim.
             log.error(`attestor: verified outcome for ${contractId} lacks outputHash; skipping`);
             return;
           }
           const now = await deps.submitter.currentLedger();
+          await deps.submitter.upsert(contractId, hash, now + ttl);
           const publisher = source?.repoUrl ? publisherIdFor(source.repoUrl) : undefined;
           if (publisher) {
             await deps.submitter.upsertWithPublisher(

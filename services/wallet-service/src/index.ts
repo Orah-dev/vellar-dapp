@@ -39,6 +39,8 @@ const budgetLimits = {
 
 const config = configFromEnv();
 
+const REPLAY_PURGE_INTERVAL_MS = 15 * 60_000;
+
 // Resolve persistence FIRST — the funding-path budget (FIX 3) needs a durable
 // ledger, and the submitter needs that budget, so DB comes before both.
 const deps: WalletServiceDeps = {
@@ -147,6 +149,32 @@ if (dbHandle) {
   budget = createUnavailableBudget();
 }
 deps.budget = budget;
+
+// Replay reservations for /wallet/submit (issue #416), on the same server-config
+// network as the budget. Without a durable DB the in-memory default applies —
+// and the funding paths already refuse (unavailable budget), so nothing is
+// sponsored unguarded. Expired reservations (auth past its
+// signatureExpirationLedger, which the chain rejects anyway) are purged against
+// the live ledger; a failed purge only delays cleanup, never weakens the guard.
+let stopReplayPurge: (() => void) | undefined;
+if (dbHandle) {
+  const { createPgReplayGuard } = await import("./db/pg-replay");
+  const { rpc } = await import("@stellar/stellar-sdk");
+  const replayGuard = createPgReplayGuard(dbHandle.db, budgetNetwork);
+  deps.replayGuard = replayGuard;
+  const rpcServer = new rpc.Server(config.relayer?.rpcUrl ?? DEFAULTS.rpcUrl);
+  const purge = async () => {
+    try {
+      const { sequence } = await rpcServer.getLatestLedger();
+      await replayGuard.purgeExpired(sequence);
+    } catch (err) {
+      console.warn(`[wallet-service] replay purge skipped: ${(err as Error).message}`);
+    }
+  };
+  const timer = setInterval(() => void purge(), REPLAY_PURGE_INTERVAL_MS);
+  timer.unref();
+  stopReplayPurge = () => clearInterval(timer);
+}
 // Create budget line meters on the server-config network (V5/RA-3), same source
 // as the sponsor line — never the request body.
 deps.budgetNetwork = budgetNetwork;
@@ -183,7 +211,10 @@ deps.cache = createCacheMetricsWrapper(cache);
 const app = buildServer(deps);
 
 if (closeDb) {
-  app.addHook("onClose", async () => closeDb?.());
+  app.addHook("onClose", async () => {
+    stopReplayPurge?.();
+    await closeDb?.();
+  });
   app.log.info("Postgres connected, migrations applied");
 } else {
   app.log.warn(
