@@ -1,7 +1,9 @@
-import { and, desc, eq, gt } from "drizzle-orm";
+import { and, desc, eq, gt, lt, or } from "drizzle-orm";
 import type { Network } from "@vellar/types";
 import {
+  decodeAuditCursor,
   DuplicateWalletError,
+  encodeAuditCursor,
   type AuditLog,
   type SessionRepository,
   type WalletRepository,
@@ -131,6 +133,18 @@ function toSessionRecord(row: typeof walletSessions.$inferSelect) {
   };
 }
 
+function toAuditEvent(row: typeof activityLogs.$inferSelect) {
+  return {
+    id: row.id,
+    type: row.type,
+    at: row.at.toISOString(),
+    data: row.data,
+    // Real actor column (issue #256) is authoritative; data.actor is kept
+    // only as a fallback for any pre-migration row the backfill missed.
+    actor: row.actor ?? ((row.data as Record<string, unknown> | undefined)?.actor as string | undefined),
+  };
+}
+
 export function createPgAuditLog(db: Db): AuditLog {
   return {
     async record(type, data, actor) {
@@ -139,17 +153,13 @@ export function createPgAuditLog(db: Db): AuditLog {
         type,
         at: new Date(),
         data: { ...data, ...(actor ? { actor } : {}) },
+        actor,
       });
     },
 
     async list(filter) {
       const rows = await db.select().from(activityLogs).orderBy(activityLogs.at);
-      let events = rows.map((row) => ({
-        type: row.type,
-        at: row.at.toISOString(),
-        data: row.data,
-        actor: (row.data as Record<string, unknown> | undefined)?.actor as string | undefined,
-      }));
+      let events = rows.map(toAuditEvent);
       if (filter?.type) {
         events = events.filter((e) => e.type === filter.type);
       }
@@ -157,6 +167,41 @@ export function createPgAuditLog(db: Db): AuditLog {
         events = events.filter((e) => e.actor === filter.actor);
       }
       return events;
+    },
+
+    async listPage(filter) {
+      const conditions = [];
+      if (filter.type) conditions.push(eq(activityLogs.type, filter.type));
+      if (filter.actor) conditions.push(eq(activityLogs.actor, filter.actor));
+
+      if (filter.after) {
+        const decoded = decodeAuditCursor(filter.after);
+        const afterAt = new Date(decoded.at);
+        // Keyset predicate for (at DESC, id DESC): strictly older `at`, OR the
+        // same `at` with a strictly smaller `id` — matches the ORDER BY below
+        // exactly, so a page boundary landing on a tied `at` cannot skip or
+        // repeat a row.
+        conditions.push(
+          or(lt(activityLogs.at, afterAt), and(eq(activityLogs.at, afterAt), lt(activityLogs.id, decoded.id))),
+        );
+      }
+
+      const rows = await db
+        .select()
+        .from(activityLogs)
+        .where(conditions.length > 0 ? and(...conditions) : undefined)
+        .orderBy(desc(activityLogs.at), desc(activityLogs.id))
+        .limit(filter.limit + 1);
+
+      const hasMore = rows.length > filter.limit;
+      const page = hasMore ? rows.slice(0, filter.limit) : rows;
+      const events = page.map(toAuditEvent);
+      const last = events[events.length - 1];
+      return {
+        events,
+        hasMore,
+        nextCursor: hasMore && last ? encodeAuditCursor(last.at, last.id) : undefined,
+      };
     },
   };
 }

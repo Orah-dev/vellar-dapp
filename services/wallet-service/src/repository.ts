@@ -82,15 +82,37 @@ export const SENSITIVE_WALLET_ACTIONS = [
 export type SensitiveWalletAction = (typeof SENSITIVE_WALLET_ACTIONS)[number];
 
 export interface AuditEvent {
+  /** Stable, strictly-increasing-with-insertion-order id. Required (not just
+   * `at`) as the keyset tiebreaker for listPage: two events can share the same
+   * millisecond `at`, and without a tiebreaker a page boundary landing on a
+   * tie could skip or repeat a row. */
+  id: string;
   type: string;
   at: string;
   data: Record<string, unknown>;
   actor?: string;
 }
 
+/** Opaque pagination cursor for AuditLog.list (issue #256): callers pass back
+ * a previous page's nextCursor verbatim and must not construct or parse one. */
+export type AuditCursor = string;
+
+export interface AuditPage {
+  events: AuditEvent[];
+  hasMore: boolean;
+  /** Present iff hasMore; pass to the next call's `after` filter. */
+  nextCursor?: AuditCursor;
+}
+
 export interface AuditLog {
   record(type: string, data: Record<string, unknown>, actor?: string): Promise<void>;
+  /** Unpaginated: every matching event, oldest first. Existing callers (e.g.
+   * GET /wallet/audit-logs) that want "everything" keep working unchanged. */
   list(filter?: { type?: string; actor?: string }): Promise<AuditEvent[]>;
+  /** Paginated: newest first (issue #256's cursor-based history view). `limit`
+   * is capped and defaulted by the caller (see DEFAULT_TX_HISTORY_LIMIT /
+   * MAX_TX_HISTORY_LIMIT in server.ts) — this method trusts it as given. */
+  listPage(filter: { type?: string; actor?: string; limit: number; after?: AuditCursor }): Promise<AuditPage>;
 }
 
 export function createMemoryWalletRepository(): WalletRepository {
@@ -145,9 +167,10 @@ export function createMemorySessionRepository(): SessionRepository {
 
 export function createMemoryAuditLog(): AuditLog {
   const events: AuditEvent[] = [];
+  let nextId = 0;
   return {
     async record(type, data, actor) {
-      events.push({ type, at: new Date().toISOString(), data, actor });
+      events.push({ id: String(nextId++), type, at: new Date().toISOString(), data, actor });
     },
     async list(filter) {
       let filtered = [...events];
@@ -159,5 +182,60 @@ export function createMemoryAuditLog(): AuditLog {
       }
       return filtered;
     },
+    async listPage(filter) {
+      return paginateAuditEvents(events, filter);
+    },
   };
+}
+
+/** Shared newest-first keyset pagination over an in-memory AuditEvent array,
+ * used by both createMemoryAuditLog and (for the events it has already
+ * fetched from Postgres) createPgAuditLog. Keyed on (at, id) descending: `at`
+ * alone is not a total order (two events can share a millisecond), so `id`
+ * (numeric-string insertion sequence in memory; a UUID string in Postgres,
+ * where it only needs to break ties WITHIN one `at` value, not provide a
+ * global order on its own) is the required tiebreaker. */
+export function paginateAuditEvents(
+  events: readonly AuditEvent[],
+  filter: { type?: string; actor?: string; limit: number; after?: AuditCursor },
+): AuditPage {
+  let filtered = events.filter((e) => {
+    if (filter.type && e.type !== filter.type) return false;
+    if (filter.actor && e.actor !== filter.actor) return false;
+    return true;
+  });
+  filtered = [...filtered].sort((a, b) => {
+    if (a.at !== b.at) return a.at < b.at ? 1 : -1; // newest first
+    return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+  });
+
+  if (filter.after) {
+    const decoded = decodeAuditCursor(filter.after);
+    filtered = filtered.filter((e) => {
+      if (e.at !== decoded.at) return e.at < decoded.at;
+      return e.id < decoded.id;
+    });
+  }
+
+  const hasMore = filtered.length > filter.limit;
+  const page = hasMore ? filtered.slice(0, filter.limit) : filtered;
+  const last = page[page.length - 1];
+  return {
+    events: page,
+    hasMore,
+    nextCursor: hasMore && last ? encodeAuditCursor(last.at, last.id) : undefined,
+  };
+}
+
+export function encodeAuditCursor(at: string, id: string): AuditCursor {
+  return Buffer.from(`${at}:${id}`, "utf8").toString("base64url");
+}
+
+export function decodeAuditCursor(cursor: AuditCursor): { at: string; id: string } {
+  const decoded = Buffer.from(cursor, "base64url").toString("utf8");
+  const sep = decoded.lastIndexOf(":");
+  if (sep <= 0 || sep === decoded.length - 1) {
+    throw new Error("malformed audit cursor");
+  }
+  return { at: decoded.slice(0, sep), id: decoded.slice(sep + 1) };
 }

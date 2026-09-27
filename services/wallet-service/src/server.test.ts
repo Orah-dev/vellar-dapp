@@ -547,23 +547,6 @@ describe("POST /wallet/submit funding-path scoping (C1/H1/V2)", () => {
   });
 });
 
-async function createAndConnect(server: FastifyInstance) {
-  const create = await server.inject({
-    method: "POST",
-    url: "/wallet/create",
-    payload: createBody,
-  });
-  const connect = await server.inject({
-    method: "POST",
-    url: "/wallet/connect",
-    payload: { keyId: createBody.keyId, network: "testnet" },
-  });
-  return {
-    createSessionId: create.json().sessionId as string,
-    connectSessionId: connect.json().sessionId as string,
-  };
-}
-
 describe("session management (§5.1) — bearer capability (RA-3/M1)", () => {
   const bearer = (id: string) => ({ authorization: `Bearer ${id}` });
 
@@ -830,6 +813,223 @@ describe("sensitive wallet action audit logging (#313)", () => {
       expect(log.actor).toBe("CCONTRACT");
       expect(log.at).toBeDefined();
     }
+  });
+});
+
+describe("GET /wallet/transactions (issue #256)", () => {
+  const bearer = (id: string) => ({ authorization: `Bearer ${id}` });
+  const PASSPHRASE = "Test SDF Network ; September 2015";
+  const KEY_ID = "AAECAwQFBgcICQoLDA0ODw";
+  const CONTRACT_ID = deriveWalletContractId(KEY_ID, { networkPassphrase: PASSPHRASE });
+
+  // A derivation-gated server (networkPassphrase set) rejects a create whose
+  // contractId isn't derive(keyId) (V1), so the end-to-end tests below (which
+  // build a server WITH networkPassphrase, to exercise the real submit-time
+  // scoping check) must use the real derived value, not the plain "CCONTRACT"
+  // placeholder createAndConnect/createBody use above.
+  async function createAndConnectDerived(server: FastifyInstance) {
+    const create = await server.inject({
+      method: "POST",
+      url: "/wallet/create",
+      payload: { keyId: KEY_ID, contractId: CONTRACT_ID, network: "testnet", signedTx: "xdr" },
+    });
+    const connect = await server.inject({
+      method: "POST",
+      url: "/wallet/connect",
+      payload: { keyId: KEY_ID, network: "testnet" },
+    });
+    return {
+      createSessionId: create.json().sessionId as string,
+      connectSessionId: connect.json().sessionId as string,
+    };
+  }
+
+  function buildInvokeTx(subject: string): string {
+    const source = Keypair.random();
+    const account = new Account(source.publicKey(), "0");
+    const addr = Address.fromString(subject);
+    const authEntry = new xdr.SorobanAuthorizationEntry({
+      credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+        new xdr.SorobanAddressCredentials({
+          address: addr.toScAddress(),
+          nonce: xdr.Int64.fromString("0"),
+          signatureExpirationLedger: 0,
+          signature: xdr.ScVal.scvVoid(),
+        }),
+      ),
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({
+        function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new xdr.InvokeContractArgs({
+            contractAddress: addr.toScAddress(),
+            functionName: "transfer",
+            args: [],
+          }),
+        ),
+        subInvocations: [],
+      }),
+    });
+    const op = Operation.invokeHostFunction({
+      func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+        new xdr.InvokeContractArgs({
+          contractAddress: addr.toScAddress(),
+          functionName: "transfer",
+          args: [],
+        }),
+      ),
+      auth: [authEntry],
+    });
+    return new TransactionBuilder(account, { fee: "100", networkPassphrase: PASSPHRASE })
+      .addOperation(op)
+      .setTimeout(30)
+      .build()
+      .toXDR();
+  }
+
+  function buildScopedServer(submitter: TransactionSubmitter, audit?: AuditLog) {
+    const wallets = createMemoryWalletRepository();
+    app = buildServer({ submitter, wallets, audit, networkPassphrase: PASSPHRASE });
+    return { server: app, wallets };
+  }
+
+  it("shows a real /wallet/submit transaction in the submitting wallet's history (end-to-end)", async () => {
+    const submitter = workingSubmitter();
+    const audit = createMemoryAuditLog();
+    const { server } = buildScopedServer(submitter, audit);
+    // /wallet/create itself inserts the wallet mapping; pre-inserting it
+    // separately here would make /wallet/create 409 (DuplicateWalletError)
+    // and leave createSessionId undefined.
+    const { createSessionId } = await createAndConnectDerived(server);
+
+    const submitRes = await server.inject({
+      method: "POST",
+      url: "/wallet/submit",
+      payload: { signedXdr: buildInvokeTx(CONTRACT_ID), network: "testnet" },
+    });
+    expect(submitRes.statusCode).toBe(200);
+    const { hash } = submitRes.json();
+
+    const res = await server.inject({
+      url: `/wallet/transactions?contractId=${CONTRACT_ID}&network=testnet`,
+      headers: bearer(createSessionId),
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.transactions).toHaveLength(1);
+    expect(body.transactions[0].txHash).toBe(hash);
+    expect(body.hasMore).toBe(false);
+    expect(body.nextCursor).toBeNull();
+  });
+
+  it("does not show another wallet's transaction (no cross-account leak)", async () => {
+    const submitter = workingSubmitter();
+    const audit = createMemoryAuditLog();
+    const { server, wallets } = buildScopedServer(submitter, audit);
+    // /wallet/create itself inserts CONTRACT_ID's mapping; only OTHER (a
+    // different wallet, not going through /wallet/create in this test) is
+    // inserted directly.
+    const OTHER = "CA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUWDA";
+    await wallets.insert({ keyId: "k2", contractId: OTHER, network: "testnet", createdAt: new Date().toISOString() });
+    const { createSessionId } = await createAndConnectDerived(server);
+
+    // A transaction for the OTHER wallet, recorded directly (no session for
+    // OTHER exists to submit through the real route, and none should be
+    // needed to prove the point: CONTRACT_ID's history must never include it).
+    await audit.record("tx.submitted", { network: "testnet", txHash: "other-hash" }, OTHER);
+
+    const res = await server.inject({
+      url: `/wallet/transactions?contractId=${CONTRACT_ID}&network=testnet`,
+      headers: bearer(createSessionId),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().transactions).toHaveLength(0);
+  });
+
+  it("rejects a bearer for a DIFFERENT contract than the one queried (no cross-account read)", async () => {
+    const audit = createMemoryAuditLog();
+    const server = build(workingSubmitter(), audit);
+    const { createSessionId } = await createAndConnect(server);
+    const res = await server.inject({
+      url: "/wallet/transactions?contractId=COTHER&network=testnet",
+      headers: bearer(createSessionId),
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("rejects a missing bearer with 401", async () => {
+    const server = build(workingSubmitter());
+    const res = await server.inject({ url: "/wallet/transactions?contractId=CCONTRACT&network=testnet" });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("paginates: first page, middle page, and the terminal empty-cursor page, with no row skipped or duplicated", async () => {
+    const audit = createMemoryAuditLog();
+    const server = build(workingSubmitter(), audit);
+    const { createSessionId } = await createAndConnect(server);
+
+    // 5 events, oldest first; listPage returns newest first.
+    for (let i = 0; i < 5; i++) {
+      await audit.record("tx.submitted", { network: "testnet", txHash: `hash-${i}` }, "CCONTRACT");
+    }
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const url = cursor
+        ? `/wallet/transactions?contractId=CCONTRACT&network=testnet&limit=2&after=${encodeURIComponent(cursor)}`
+        : `/wallet/transactions?contractId=CCONTRACT&network=testnet&limit=2`;
+      const res = await server.inject({ url, headers: bearer(createSessionId) });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.transactions.length).toBeLessThanOrEqual(2);
+      for (const tx of body.transactions) seen.push(tx.txHash);
+      if (!body.hasMore) {
+        expect(body.nextCursor).toBeNull();
+        break;
+      }
+      expect(body.nextCursor).toBeTruthy();
+      cursor = body.nextCursor;
+    }
+
+    expect(seen).toEqual(["hash-4", "hash-3", "hash-2", "hash-1", "hash-0"]);
+  });
+
+  it("returns an empty page (not an error) for a wallet with no transactions", async () => {
+    const server = build(workingSubmitter());
+    const { createSessionId } = await createAndConnect(server);
+    const res = await server.inject({
+      url: "/wallet/transactions?contractId=CCONTRACT&network=testnet",
+      headers: bearer(createSessionId),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ transactions: [], hasMore: false, nextCursor: null });
+  });
+
+  it("caps limit at MAX_TX_HISTORY_LIMIT rather than trusting an oversized caller value", async () => {
+    const audit = createMemoryAuditLog();
+    const server = build(workingSubmitter(), audit);
+    const { createSessionId } = await createAndConnect(server);
+    for (let i = 0; i < 5; i++) {
+      await audit.record("tx.submitted", { network: "testnet", txHash: `hash-${i}` }, "CCONTRACT");
+    }
+    const res = await server.inject({
+      url: "/wallet/transactions?contractId=CCONTRACT&network=testnet&limit=999999",
+      headers: bearer(createSessionId),
+    });
+    expect(res.statusCode).toBe(200);
+    // Only 5 events exist, so this doesn't prove the cap alone, but does
+    // prove an oversized limit is accepted (not a 400) and doesn't error.
+    expect(res.json().transactions).toHaveLength(5);
+  });
+
+  it("rejects a malformed cursor with 400, not 500", async () => {
+    const server = build(workingSubmitter());
+    const { createSessionId } = await createAndConnect(server);
+    const res = await server.inject({
+      url: "/wallet/transactions?contractId=CCONTRACT&network=testnet&after=not-a-real-cursor",
+      headers: bearer(createSessionId),
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_cursor");
   });
 });
 

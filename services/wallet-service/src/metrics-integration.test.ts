@@ -6,8 +6,6 @@ import { MemoryCacheStore } from "./cache";
 import { createCacheMetricsWrapper } from "./cache-metrics";
 import { buildServer } from "./server";
 import { createUnconfiguredSubmitter } from "./relayer";
-import { MemoryCacheStore } from "./cache";
-import { createCacheMetricsWrapper } from "./cache-metrics";
 import { createMemoryWalletRepository, createMemorySessionRepository } from "./repository";
 
 describe("Cache Metrics Integration (/metrics endpoint)", () => {
