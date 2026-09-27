@@ -62,6 +62,8 @@ export {
 
 export { createPgSpendBudget, type BudgetDb, type PgBudgetConfig } from "./pg-budget";
 
+export { applyMigrations, type MigrationClient } from "./migrations";
+
 export {
   extractTraceContext,
   injectTraceContext,
