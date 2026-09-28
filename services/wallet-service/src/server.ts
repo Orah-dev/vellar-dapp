@@ -9,6 +9,7 @@ import {
   recordOutcome,
   type SpendBudget,
   type BudgetNetwork,
+  registerTracing,
 } from "@vellar/service-kit";
 import {
   createMemoryAuditLog,
@@ -160,6 +161,7 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
   const passkeyRateLimitWindowMs = deps.passkeyRateLimitWindowMs ?? 60_000;
 
   const app = Fastify({ logger: true });
+  registerTracing(app, "wallet-service");
   registerHealth(app, "wallet-service", { isReady: deps.isReady });
   registerMetrics(app, "wallet-service");
   initCacheMetrics();
@@ -481,6 +483,9 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
       await deps.jobQueue.enqueue({
         ...parsed.data,
         correlationId,
+        // #301: the worker continues this request's trace.
+        traceId: request.traceContext?.traceId,
+        traceParentSpanId: request.traceContext?.spanId,
       });
     }
     request.log.info({ correlationId, recordId: parsed.data.recordId }, "worker job enqueued");

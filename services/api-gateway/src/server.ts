@@ -7,10 +7,10 @@ import {
   CircuitOpenError,
   createCircuitBreaker,
   domainMetrics,
-  extractTraceContext,
   injectTraceContext,
   registerHealth,
   registerMetrics,
+  registerTracing,
 } from "@vellar/service-kit";
 import { registerErrorEnvelope, sendError } from "./error-envelope";
 import { registerVersionedProxyRoute } from "./register-proxy-route";
@@ -112,6 +112,11 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
   // unchanged, not touched by this).
   registerErrorEnvelope(app);
 
+  // Distributed tracing (#301): the gateway's server span is the root every
+  // downstream hop parents onto. Registered before the boundary hook below,
+  // which reads request.traceContext to rewrite the proxied headers.
+  registerTracing(app, "api-gateway");
+
   // Structured request logging middleware (idea.md §13, docs/observability.md):
   // Emits structured JSON containing method, path, status, and duration for every request.
   app.addHook("onResponse", async (request, reply) => {
@@ -160,6 +165,8 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
       }
     },
     methods: ["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
+    // Let the web app read which trace served a request (#301).
+    exposedHeaders: ["traceparent", "x-trace-id"],
   });
 
   // Boundary checks that must run BEFORE proxying. @fastify/http-proxy streams
@@ -170,11 +177,13 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
     const method = request.method.toUpperCase();
     const isMutation = method === "POST" || method === "PUT" || method === "PATCH";
 
-    // Distributed tracing context propagation (#301)
-    const traceCtx = extractTraceContext(request.headers as Record<string, string | undefined>);
-    const traceHeaders = injectTraceContext(traceCtx);
-    for (const [key, value] of Object.entries(traceHeaders)) {
-      request.headers[key] = value;
+    // Distributed tracing context propagation (#301): overwrite whatever the
+    // client sent with the gateway span's context, so the upstream service's
+    // server span is a child of the gateway span (same traceId, parent = us).
+    if (request.traceContext) {
+      for (const [key, value] of Object.entries(injectTraceContext(request.traceContext))) {
+        request.headers[key] = value;
+      }
     }
 
     // Per-tenant token bucket rate limit (#259)

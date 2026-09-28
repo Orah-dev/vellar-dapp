@@ -85,10 +85,17 @@ export {
   extractTraceContext,
   injectTraceContext,
   withTraceSpan,
+  childContext,
+  parseTraceparent,
+  toW3CTraceId,
+  newTraceId,
+  newSpanId,
+  registerTracing,
   TraceCollector,
   type TraceSpan,
   type TraceContext,
   type TraceHeaderMap,
+  type SpanListener,
 } from "./tracing";
 
 export {

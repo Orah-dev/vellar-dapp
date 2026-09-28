@@ -17,7 +17,7 @@ describe("distributed tracing module (#301)", () => {
 
     const injected = injectTraceContext(context);
     expect(injected["x-trace-id"]).toBe("trace-12345");
-    expect(injected.traceparent).toContain("trace12345");
+    expect(injected.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
   });
 
   it("extracts trace context from W3C traceparent header", () => {

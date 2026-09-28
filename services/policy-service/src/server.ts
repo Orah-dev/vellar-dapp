@@ -10,6 +10,7 @@ import {
   logEvent,
   type SpendBudget,
   type BudgetNetwork,
+  registerTracing,
 } from "@vellar/service-kit";
 import type { PolicyDefinition } from "@vellar/types";
 import { PolicyDeployError, type PolicyDeployer } from "./deploy";
@@ -199,6 +200,7 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
   };
 
   const app = Fastify({ logger: true });
+  registerTracing(app, "policy-service");
   registerHealth(app, "policy-service", { isReady: deps.isReady });
   registerMetrics(app, "policy-service");
 
@@ -389,10 +391,14 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
     }
 
     try {
-      const { record: updated, contractId } = await deployPolicyInstance(
-        deploymentDeps,
-        record,
-        parsed.data.wallet,
+      // #301: the sponsor-funded deploy is the slow, failure-prone hop — give it
+      // its own span under this request's server span.
+      const { record: updated, contractId } = await withTraceSpan(
+        "policy-service",
+        "policy.deploy-instance",
+        request.traceContext ?? extractTraceContext(request.headers),
+        () => deployPolicyInstance(deploymentDeps, record, parsed.data.wallet),
+        { policyId: id },
       );
       return reply.send({ policy: updated, contractId });
     } catch (err) {
@@ -608,10 +614,14 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
 
     let result: { contractId: string; txHash: string };
     try {
-      result = await deployer.deployInstance({
-        wallet: parsed.data.wallet,
-        constructorArgs: enforcement.constructorArgs,
-      });
+      const constructorArgs = enforcement.constructorArgs;
+      result = await withTraceSpan(
+        "policy-service",
+        "policy.deploy-instance",
+        request.traceContext ?? extractTraceContext(request.headers),
+        () => deployer.deployInstance({ wallet: parsed.data.wallet, constructorArgs }),
+        { policyId: id, admin: true },
+      );
     } catch (err) {
       if (err instanceof PolicyDeployError) {
         request.log.error({ err, policyId: id }, "policy instance deploy failed");

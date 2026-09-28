@@ -6,6 +6,7 @@ import {
   domainMetrics,
   recordOutcome,
   publicBaseUrlFromEnv,
+  registerTracing,
 } from "@vellar/service-kit";
 import { buildCleanupSteps, buildMergeStep } from "./builder";
 import type { AccountReader } from "./horizon";
@@ -115,6 +116,7 @@ function validatePair(accountId: string, destination: string): string | undefine
 
 export function buildServer(deps: LifecycleServiceDeps): FastifyInstance {
   const app = Fastify({ logger: true });
+  registerTracing(app, "lifecycle-service");
   registerHealth(app, "lifecycle-service");
   registerMetrics(app, "lifecycle-service");
 
