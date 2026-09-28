@@ -149,15 +149,78 @@ vela_worker_processing_lag_seconds{service="worker-service"}
 
 ## Distributed Tracing (#301)
 
-End-to-end trace visibility across service boundaries during policy generation and deployment flows is captured using OpenTelemetry-compatible trace spans via `@vellar/service-kit`:
+Every hop of a request carries one trace, from the browser to the build worker.
+Primitives live in `@vellar/service-kit` (`packages/service-kit/src/tracing.ts`).
 
-### Trace Propagation Flow
+### Headers
 
-1. **API Gateway (`api-gateway`)**: Injects or extracts `x-trace-id`, `x-span-id`, and W3C `traceparent` headers on incoming HTTP requests and proxies them to downstream services.
-2. **Policy Service (`policy-service`)**: Extracts trace context from headers and wraps policy generation and deployment operations in `withTraceSpan("policy-service", "policy.deploy-instance", traceCtx)`. Propagates `traceId` with queued verification and deployment jobs.
-3. **Worker Service (`worker-service`)**: Extracts `traceId` from claimed deployment jobs and executes verification in `withTraceSpan("worker-service", "policy.execute", traceCtx)`.
+| Header        | Format                                     | Purpose                                  |
+| ------------- | ------------------------------------------ | ---------------------------------------- |
+| `traceparent` | W3C: `00-<32 hex trace-id>-<16 hex parent>-01` | read by OpenTelemetry-compatible APMs |
+| `x-trace-id`  | opaque token `[A-Za-z0-9._:-]{1,128}`      | log search key                           |
+| `x-span-id`   | same                                       | caller's span (the downstream parent)    |
 
-Trace spans are recorded in `TraceCollector` and exportable to OpenTelemetry APM backends (Jaeger, Zipkin, Datadog).
+Inbound precedence: a valid `traceparent` → `x-trace-id` (+ `x-span-id`) →
+`x-request-id` → a fresh trace. A malformed `traceparent` (bad shape, all-zero
+ids, version `ff`) is ignored; an `x-trace-id` outside the token charset is
+dropped. When `x-trace-id` isn't already 32-hex/UUID, the emitted
+`traceparent` trace-id is its SHA-256 prefix, so every hop derives the same one.
+
+### Propagation path
+
+```
+browser ──traceparent?──▶ api-gateway          span "METHOD /route" (root, or child of browser)
+                            │  rewrites traceparent/x-trace-id/x-span-id → gateway span
+                            ▼
+          wallet | policy | lifecycle | verification | permission-service
+                            │  registerTracing: server span, child of gateway span
+                            │  request.traceContext = this span; request.log has traceId/spanId
+                            │
+      policy-service ───────┼─▶ span "policy.deploy-instance" (sponsor deploy, child of server span)
+                            │
+      verification-service ─┼─▶ record.traceId / record.traceParentSpanId  (jsonb, internal only)
+      wallet /wallet/jobs ──┘   job.traceId / job.traceParentSpanId
+                            ▼
+                     worker-service claims row ─▶ span "verification.execute"
+                                                  (child of the submitting server span)
+```
+
+- `registerTracing(app, service)` opens the server span in `onRequest`, echoes
+  `traceparent` + `x-trace-id` on the response in `onSend` (the gateway exposes
+  both via CORS), and records the span in `onResponse` (status `error` on 5xx,
+  name re-labelled to the route pattern).
+- The gateway registers it **before** its boundary hook, which forwards the
+  gateway span's context upstream, so downstream spans parent onto the gateway.
+- The worker has no HTTP request: the trace crosses the queue as fields on the
+  verification record. `toPublic` strips them; rows written before #301 (or
+  with a malformed value) validate fine and start a fresh trace.
+
+Spans land in `TraceCollector` (bounded to the latest 10 000). Hook an exporter
+with `TraceCollector.getInstance().onSpan(span => …)` to ship them to Jaeger,
+Zipkin, Datadog or an OTLP collector; an exporter that throws never fails the
+request.
+
+### Verifying propagation end to end
+
+1. Send a request with a known trace through the gateway:
+
+   ```sh
+   curl -si -X POST "$GATEWAY/verification/submit" \
+     -H 'content-type: application/json' \
+     -H 'traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01' \
+     -d '{ "contractId": "C…", "sourceType": "repo", "repoUrl": "…", "commitHash": "…" }'
+   ```
+
+   The response carries `x-trace-id: 4bf92f3577b34da6a3ce929d0e0e4736` and a
+   `traceparent` with that same trace-id and the gateway's span as parent.
+2. Search logs for `"traceId":"4bf92f3577b34da6a3ce929d0e0e4736"`: expect lines
+   from `api-gateway` and `verification-service` (request logger bindings),
+   then a worker line `verification <id> → verified (…) [traceId=4bf9…]`.
+3. With an exporter attached, the trace shows
+   `api-gateway` → `verification-service` → `worker-service verification.execute`,
+   each span's `parentSpanId` equal to the previous span's `spanId`.
+4. Repeat without `traceparent`: the gateway mints a trace and step 2 still
+   finds one id across all three services.
 
 ### Structured events
 
