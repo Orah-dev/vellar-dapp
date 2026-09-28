@@ -9,6 +9,7 @@ import { useWalletSession } from "@/lib/wallet-context";
 import { getAnalyticsTracker, walletCreationEvents } from "@/lib/analytics";
 import { ReceiveCard } from "./receive-card";
 import { SendPayment } from "./send-payment";
+import { ActivityPanel } from "./activity";
 
 // Wallet dashboard ("paper & signals" shell): panel grid — Account overview
 // (balance + details) · My assets · Activity. Send/Receive open as focused
@@ -112,6 +113,27 @@ export default function Dashboard() {
               />
               <DetailRow label="Network" value={session?.network ?? ""} />
               <DetailRow label="Auth method" value="Passkey" />
+              {session?.createdAt && (
+                <DetailRow
+                  label="Wallet since"
+                  value={new Date(session.createdAt).toLocaleDateString(undefined, {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                  })}
+                />
+              )}
+              {session?.lastActiveAt && (
+                <DetailRow
+                  label="Last active"
+                  value={new Date(session.lastActiveAt).toLocaleString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                />
+              )}
             </dl>
           </section>
 
@@ -149,15 +171,14 @@ export default function Dashboard() {
             )}
           </section>
 
-          {/* Activity */}
+          {/* Activity (issue #403): real transaction history, paginated
+              newest-first. Rendered inside its own panel so a slow history
+              fetch never blocks the balance/assets panels. */}
           <section className="lpa-panel min-h-[260px]">
             <Eyebrow>Activity</Eyebrow>
-            <div className="lpa-empty mt-6">
-              <div className="ph" />
-              <p className="max-w-[200px] text-sm!">
-                Transaction history arrives with a later wallet-core slice.
-              </p>
-            </div>
+            {session && (
+              <ActivityPanel accountId={session.accountId} network={session.network} />
+            )}
           </section>
         </div>
       )}
