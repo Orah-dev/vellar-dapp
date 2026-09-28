@@ -5,11 +5,13 @@
 The DLQ system prevents policy deployment jobs from retrying forever. When a job fails more than `MAX_RETRIES` times (default: 5), it's moved to an immutable dead-letter queue with an audit trail. Operators can then inspect the failure reason, fix root causes, and manually requeue jobs for retry.
 
 **Key Metrics:**
+
 - `dlq_enqueue_total{job_type="policy_deploy"}` — Jobs moved to DLQ
 - `dlq_requeue_total{job_type="policy_deploy"}` — DLQ jobs requeued
 - `dlq_depth_gauge{job_type="policy_deploy"}` — Current DLQ backlog
 
 **Alert Rule:**
+
 ```
 DLQHighDepth: sum(dlq_depth_gauge) > 10 for 10m
 ```
@@ -21,18 +23,21 @@ DLQHighDepth: sum(dlq_depth_gauge) > 10 for 10m
 ### Via Admin API
 
 List all active DLQ entries:
+
 ```bash
 curl -H "Authorization: Bearer <admin_token>" \
   https://api.example.com/admin/dlq?limit=50&offset=0
 ```
 
 Get detailed view of a specific entry:
+
 ```bash
 curl -H "Authorization: Bearer <admin_token>" \
   https://api.example.com/admin/dlq/<dlq_id>
 ```
 
 Includes:
+
 - Original job payload
 - Failure reason (sanitized)
 - Retry history and timestamps
@@ -46,6 +51,7 @@ curl -H "Authorization: Bearer <admin_token>" \
 ```
 
 Response:
+
 ```json
 {
   "depth": 12
@@ -55,16 +61,19 @@ Response:
 ### Prometheus Queries
 
 Active DLQ entries:
+
 ```promql
 dlq_depth_gauge{job_type="policy_deploy"}
 ```
 
 Rate of DLQ enqueues (jobs/minute):
+
 ```promql
 rate(dlq_enqueue_total{job_type="policy_deploy"}[5m]) * 60
 ```
 
 Rate of requeues (jobs/minute):
+
 ```promql
 rate(dlq_requeue_total{job_type="policy_deploy"}[5m]) * 60
 ```
@@ -77,25 +86,27 @@ rate(dlq_requeue_total{job_type="policy_deploy"}[5m]) * 60
 
 Check the `last_error` field in the DLQ entry. Common failures:
 
-| Error | Root Cause | Fix |
-|-------|-----------|-----|
-| `Sponsor account load failed` | Sponsor RPC connection down or account missing | Verify RPC health and sponsor account funded |
-| `Policy deploy simulation failed` | Invalid constructor args (limit/window) | Check policy template args in database |
-| `Deploy failed on-chain` | Insufficient sponsor balance | Fund sponsor account |
-| `Deploy timeout` | Network congestion or RPC slow | Wait 5-10 minutes, then retry |
-| `Contract id could not be read` | SDK parsing error (rare) | Upgrade SDK or contact support |
+| Error                             | Root Cause                                     | Fix                                          |
+| --------------------------------- | ---------------------------------------------- | -------------------------------------------- |
+| `Sponsor account load failed`     | Sponsor RPC connection down or account missing | Verify RPC health and sponsor account funded |
+| `Policy deploy simulation failed` | Invalid constructor args (limit/window)        | Check policy template args in database       |
+| `Deploy failed on-chain`          | Insufficient sponsor balance                   | Fund sponsor account                         |
+| `Deploy timeout`                  | Network congestion or RPC slow                 | Wait 5-10 minutes, then retry                |
+| `Contract id could not be read`   | SDK parsing error (rare)                       | Upgrade SDK or contact support               |
 
 ### 2. Verify External Dependencies
 
 Before requeuing, verify these are healthy:
 
 **RPC Endpoint:**
+
 ```bash
 curl https://rpc-testnet.example.com/soroban/rpc/v1
 # Should return 200 OK
 ```
 
 **Sponsor Account Funded:**
+
 ```bash
 curl https://rpc-testnet.example.com/soroban/rpc/v1 \
   -X POST \
@@ -110,6 +121,7 @@ curl https://rpc-testnet.example.com/soroban/rpc/v1 \
 ```
 
 **Policy Template Valid:**
+
 ```bash
 # Check policy definition in database
 psql $DATABASE_URL -c "SELECT * FROM policies WHERE id = '<policy_id>';"
@@ -137,6 +149,7 @@ curl -X POST \
 ```
 
 Response:
+
 ```json
 {
   "message": "DLQ entry requeued",
@@ -150,11 +163,13 @@ Response:
 ### Monitor the Requeue
 
 Tail logs for the new job:
+
 ```bash
 stern "policy-service" -f | grep "new_job_id=550e8400"
 ```
 
 Watch Prometheus dashboard for:
+
 - `dlq_depth_gauge` decreases (job is processing)
 - `dlq_requeue_total` counter increments
 - No new enqueue events (job succeeded)
@@ -172,6 +187,7 @@ curl -X POST \
 ```
 
 **Effect:**
+
 - Entry hidden from default list view
 - Appears in list only with `?archived=true` filter
 - Audit trail preserved for compliance
@@ -183,6 +199,7 @@ curl -X POST \
 If multiple deployments failed for the same reason (e.g., RPC downtime):
 
 1. List DLQ with filter:
+
    ```bash
    curl -H "Authorization: Bearer <admin_token>" \
      'https://api.example.com/admin/dlq?job_type=policy_deploy&limit=100'
@@ -193,6 +210,7 @@ If multiple deployments failed for the same reason (e.g., RPC downtime):
 3. Verify external dependencies are fixed
 
 4. Requeue each entry:
+
    ```bash
    for dlq_id in $dlq_ids; do
      curl -X POST \
@@ -217,6 +235,7 @@ Entries remain in DLQ indefinitely for audit purposes. To clean up after retenti
 1. Archive successfully requeued entries (see above)
 
 2. Query archived entries:
+
    ```bash
    curl -H "Authorization: Bearer <admin_token>" \
      'https://api.example.com/admin/dlq?archived=true&limit=100'
@@ -225,8 +244,8 @@ Entries remain in DLQ indefinitely for audit purposes. To clean up after retenti
 3. Manual cleanup via database (for retention compliance):
    ```bash
    psql $DATABASE_URL -c "
-     DELETE FROM policy_deploy_dlq 
-     WHERE archived = true 
+     DELETE FROM policy_deploy_dlq
+     WHERE archived = true
        AND updated_at < now() - interval '90 days';
    "
    ```
@@ -238,6 +257,7 @@ Entries remain in DLQ indefinitely for audit purposes. To clean up after retenti
 ## Responding to DLQHighDepth Alert
 
 **Alert Condition:**
+
 ```
 sum(dlq_depth_gauge) > 10 for 10m
 ```
@@ -247,18 +267,21 @@ sum(dlq_depth_gauge) > 10 for 10m
 1. **Page on-call engineer** — DLQ buildup may indicate systemic issue
 
 2. **Assess scale:**
+
    ```bash
    curl -H "Authorization: Bearer <admin_token>" \
      https://api.example.com/admin/dlq-depth
    ```
 
 3. **Check recent errors:**
+
    ```promql
    # Prometheus: rate of new DLQ enqueues
    rate(dlq_enqueue_total{job_type="policy_deploy"}[5m]) * 60
    ```
 
 4. **Identify patterns:**
+
    ```bash
    curl -H "Authorization: Bearer <admin_token>" \
      'https://api.example.com/admin/dlq?limit=50' | jq '.entries[].last_error' | sort | uniq -c | sort -nr
@@ -266,12 +289,12 @@ sum(dlq_depth_gauge) > 10 for 10m
 
 5. **Common Causes & Fixes:**
 
-   | Pattern | Cause | Fix |
-   |---------|-------|-----|
-   | All errors: "Sponsor account load failed" | RPC endpoint down | Check RPC health, failover if needed |
-   | "Deploy failed on-chain" (50%+) | Insufficient sponsor balance | Fund sponsor account |
-   | "Policy deploy simulation failed" | Recent policy template change | Rollback template or fix args |
-   | Mixed errors | Transient network issues | Wait 15 minutes, then batch requeue |
+   | Pattern                                   | Cause                         | Fix                                  |
+   | ----------------------------------------- | ----------------------------- | ------------------------------------ |
+   | All errors: "Sponsor account load failed" | RPC endpoint down             | Check RPC health, failover if needed |
+   | "Deploy failed on-chain" (50%+)           | Insufficient sponsor balance  | Fund sponsor account                 |
+   | "Policy deploy simulation failed"         | Recent policy template change | Rollback template or fix args        |
+   | Mixed errors                              | Transient network issues      | Wait 15 minutes, then batch requeue  |
 
 6. **Escalate if needed:**
    - Sponsor account exhausted → Finance team to fund
@@ -308,17 +331,17 @@ Add to Grafana:
   "panels": [
     {
       "title": "DLQ Depth",
-      "targets": [{"expr": "dlq_depth_gauge{job_type=\"policy_deploy\"}"}],
+      "targets": [{ "expr": "dlq_depth_gauge{job_type=\"policy_deploy\"}" }],
       "type": "graph"
     },
     {
       "title": "DLQ Enqueue Rate (jobs/min)",
-      "targets": [{"expr": "rate(dlq_enqueue_total{job_type=\"policy_deploy\"}[5m])*60"}],
+      "targets": [{ "expr": "rate(dlq_enqueue_total{job_type=\"policy_deploy\"}[5m])*60" }],
       "type": "graph"
     },
     {
       "title": "DLQ Requeue Rate (jobs/min)",
-      "targets": [{"expr": "rate(dlq_requeue_total{job_type=\"policy_deploy\"}[5m])*60"}],
+      "targets": [{ "expr": "rate(dlq_requeue_total{job_type=\"policy_deploy\"}[5m])*60" }],
       "type": "graph"
     }
   ]

@@ -12,10 +12,10 @@ const nextConfig: NextConfig = {
     "vellar-sdk",
     "@vellar/passkey",
     "@vellar/provider-sdk",
-    "@vellar/policy-sdk",
     "@vellar/verification-sdk",
-    "@vellar/lifecycle-sdk",
   ],
+  // Next 16.3+ `next dev` writes AGENTS.md/CLAUDE.md into the app dir by default.
+  agentRules: false,
 };
 
 export default nextConfig;

@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
-import { buildServer as buildLifecycleServer } from "./server";
+import { buildServer as buildLifecycleServer, fakeFacilitatorClient } from "./server";
 import { createMemoryWalletRepository } from "../../wallet-service/src/repository";
 import { buildServer as buildWalletServer } from "../../wallet-service/src/server";
-import type { AccountRecord } from "./horizon";
+import { Networks, TransactionBuilder } from "@stellar/stellar-sdk";
+import type { HorizonAccount } from "./horizon";
 
 // buildServer() registers the x402 payment gate, which resolves its public
 // resource URL from the environment and refuses to fall back to the local
@@ -19,55 +20,54 @@ afterAll(() => {
   }
 });
 
-const SOURCE_ACCOUNT = "GAKB2VWTROSQP56WMLR2EJP2W2ZAKX2HGYW2YWTROSQP56WMLR2EJP2W";
-const DEST_ACCOUNT = "GBX2VWTROSQP56WMLR2EJP2W2ZAKX2HGYW2YWTROSQP56WMLR2EJP2X";
-const FAILED_ACCOUNT = "GFAIL2VWTROSQP56WMLR2EJP2W2ZAKX2HGYW2YWTROSQP56WMLR2EJP2F";
+const SOURCE_ACCOUNT = "GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR";
+const DEST_ACCOUNT = "GCATS5YOVB6ROX2WUNKGNQ2MP3GMXDMKSG2O4N5CLX3A6W4PZGZZI55U";
+const FAILED_ACCOUNT = "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG";
 
 describe("account merge across services integration tests", () => {
-  let mockAccounts: Map<string, AccountRecord>;
+  let mockAccounts: Map<string, HorizonAccount>;
 
   beforeEach(() => {
-    mockAccounts = new Map<string, AccountRecord>([
+    mockAccounts = new Map<string, HorizonAccount>([
       [
         SOURCE_ACCOUNT,
         {
-          id: SOURCE_ACCOUNT,
+          accountId: SOURCE_ACCOUNT,
           sequence: "100",
-          balances: [{ asset_type: "native", balance: "10.5000000" }],
-          subentry_count: 0,
-          num_sponsoring: 0,
-          num_sponsored: 0,
-          flags: { auth_required: false, auth_revocable: false, auth_immutable: false, auth_clawback_enabled: false },
-          signers: [{ weight: 1, key: SOURCE_ACCOUNT, type: "ed25519_public_key" }],
+          balances: [{ assetType: "native", balance: "10.5000000" }],
+          dataKeys: [],
+          offers: [],
+          openOffers: 0,
         },
       ],
       [
         DEST_ACCOUNT,
         {
-          id: DEST_ACCOUNT,
+          accountId: DEST_ACCOUNT,
           sequence: "200",
-          balances: [{ asset_type: "native", balance: "50.0000000" }],
-          subentry_count: 0,
-          num_sponsoring: 0,
-          num_sponsored: 0,
-          flags: { auth_required: false, auth_revocable: false, auth_immutable: false, auth_clawback_enabled: false },
-          signers: [{ weight: 1, key: DEST_ACCOUNT, type: "ed25519_public_key" }],
+          balances: [{ assetType: "native", balance: "50.0000000" }],
+          dataKeys: [],
+          offers: [],
+          openOffers: 0,
         },
       ],
       [
         FAILED_ACCOUNT,
         {
-          id: FAILED_ACCOUNT,
+          accountId: FAILED_ACCOUNT,
           sequence: "150",
           balances: [
-            { asset_type: "native", balance: "5.0000000" },
-            { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00", limit: "1000", issuer: "GUSDC..." },
+            { assetType: "native", balance: "5.0000000" },
+            {
+              assetType: "credit_alphanum4",
+              assetCode: "USDC",
+              balance: "100.00",
+              assetIssuer: DEST_ACCOUNT,
+            },
           ],
-          subentry_count: 1,
-          num_sponsoring: 0,
-          num_sponsored: 0,
-          flags: { auth_required: false, auth_revocable: false, auth_immutable: false, auth_clawback_enabled: false },
-          signers: [{ weight: 1, key: FAILED_ACCOUNT, type: "ed25519_public_key" }],
+          dataKeys: [],
+          offers: [],
+          openOffers: 0,
         },
       ],
     ]);
@@ -75,10 +75,13 @@ describe("account merge across services integration tests", () => {
 
   it("performs a full account merge across services and verifies state consistency", async () => {
     const reader = {
-      getAccount: async (id: string) => mockAccounts.get(id) ?? null,
+      getAccount: async (id: string) => mockAccounts.get(id),
     };
 
-    const lifecycleApp = buildLifecycleServer({ reader });
+    const lifecycleApp = buildLifecycleServer({
+      reader,
+      x402FacilitatorClient: fakeFacilitatorClient(),
+    });
     await lifecycleApp.ready();
 
     const walletRepo = createMemoryWalletRepository();
@@ -95,7 +98,7 @@ describe("account merge across services integration tests", () => {
       payload: { accountId: SOURCE_ACCOUNT },
     });
     expect(inspectRes.statusCode).toBe(200);
-    expect(inspectRes.json().account.id).toBe(SOURCE_ACCOUNT);
+    expect(inspectRes.json().account.accountId).toBe(SOURCE_ACCOUNT);
 
     // Step 2: Plan merge via lifecycle service
     const planRes = await lifecycleApp.inject({
@@ -113,16 +116,19 @@ describe("account merge across services integration tests", () => {
       payload: { accountId: SOURCE_ACCOUNT, destination: DEST_ACCOUNT },
     });
     expect(mergeRes.statusCode).toBe(200);
-    expect(mergeRes.json().step.operations[0].type).toBe("accountMerge");
+    // CleanupStep is { title, description, xdr, hash }: decode the tx to check it.
+    const mergeTx = TransactionBuilder.fromXDR(mergeRes.json().step.xdr, Networks.TESTNET);
+    expect(mergeTx.operations).toHaveLength(1);
+    expect(mergeTx.operations[0]!.type).toBe("accountMerge");
 
     // Simulate completion: update destination balance & remove merged source
     const dest = mockAccounts.get(DEST_ACCOUNT)!;
-    dest.balances[0].balance = "60.5000000";
+    dest.balances[0]!.balance = "60.5000000";
     mockAccounts.delete(SOURCE_ACCOUNT);
 
     // Verify consistency: source is gone, destination updated
-    expect(await reader.getAccount(SOURCE_ACCOUNT)).toBeNull();
-    expect((await reader.getAccount(DEST_ACCOUNT))?.balances[0].balance).toBe("60.5000000");
+    expect(await reader.getAccount(SOURCE_ACCOUNT)).toBeUndefined();
+    expect((await reader.getAccount(DEST_ACCOUNT))?.balances[0]?.balance).toBe("60.5000000");
 
     await lifecycleApp.close();
     await walletApp.close();
@@ -130,7 +136,7 @@ describe("account merge across services integration tests", () => {
 
   it("handles a merge failure partway through when blockers remain", async () => {
     const reader = {
-      getAccount: async (id: string) => mockAccounts.get(id) ?? null,
+      getAccount: async (id: string) => mockAccounts.get(id),
     };
 
     const lifecycleApp = buildLifecycleServer({ reader });

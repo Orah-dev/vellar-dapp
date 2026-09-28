@@ -150,7 +150,7 @@ export default function DevUi() {
         </section>
 
         {/* Receive (real component) */}
-        <ReceiveCard accountId={ACCOUNT} onClose={() => {}} />
+        <ReceiveCard accountId={ACCOUNT} network="testnet" onClose={() => {}} />
       </div>
     </AppShellView>
   );

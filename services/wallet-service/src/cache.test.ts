@@ -83,10 +83,27 @@ describe("MemoryCacheStore", () => {
   });
 
   it("only cleans up expired entries, not fresh ones", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = new MemoryCacheStore(100);
+      await store.set("balance", "stale", "value1");
+
+      vi.advanceTimersByTime(150);
+      await store.set("nonce", "fresh", "value2");
+
+      const removed = await store.cleanup();
+      expect(removed).toBe(1);
+      expect(store.size()).toBe(1);
+      expect(await store.get("nonce", "fresh")).toEqual({ hit: true, value: "value2" });
+      expect(await store.get("balance", "stale")).toEqual({ hit: false });
+    } finally {
+      vi.useRealTimers();
+    }
     const cache2 = new MemoryCacheStore(200); // Longer TTL
     await cache2.set("balance", "key1", "value1");
 
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    // Past cache2's 200ms TTL so key1 has expired.
+    await new Promise((resolve) => setTimeout(resolve, 250));
 
     const cache1 = new MemoryCacheStore(100);
     await cache1.set("nonce", "key2", "value2");

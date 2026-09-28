@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { runVerification, type VerificationJobInput, type RunVerificationDeps } from "./verify";
 import { ArtifactResolveError } from "./resolver";
-import { BuildExecutorError } from "./executor";
+import { BuildExecutorError, stubBuildExecutor, type BuildExecutor } from "./executor";
 
 describe("Verification with Retry Backoff (Issue #295)", () => {
   // SUITE 1: Transient failure retry behavior
@@ -97,9 +97,7 @@ describe("Verification with Retry Backoff (Issue #295)", () => {
         build: vi.fn().mockRejectedValue(mockError),
       };
       const resolver = {
-        resolveDeployedHash: vi
-          .fn()
-          .mockResolvedValue("abc123def456"),
+        resolveDeployedHash: vi.fn().mockResolvedValue("abc123def456"),
       };
 
       const job: VerificationJobInput = {
@@ -146,10 +144,7 @@ describe("Verification with Retry Backoff (Issue #295)", () => {
   // SUITE 2: Permanent failure no-retry behavior
   describe("permanent failure no-retry behavior", () => {
     it("marks contract not found as NOT retryable", async () => {
-      const mockError = new ArtifactResolveError(
-        "contract CAA... not found on-chain",
-        "not_found",
-      );
+      const mockError = new ArtifactResolveError("contract CAA... not found on-chain", "not_found");
       const resolver = {
         resolveDeployedHash: vi.fn().mockRejectedValue(mockError),
       };
@@ -206,9 +201,7 @@ describe("Verification with Retry Backoff (Issue #295)", () => {
         build: vi.fn().mockRejectedValue(mockError),
       };
       const resolver = {
-        resolveDeployedHash: vi
-          .fn()
-          .mockResolvedValue("abc123def456"),
+        resolveDeployedHash: vi.fn().mockResolvedValue("abc123def456"),
       };
 
       const job: VerificationJobInput = {
@@ -228,17 +221,12 @@ describe("Verification with Retry Backoff (Issue #295)", () => {
     });
 
     it("marks SSRF-rejected URL as NOT retryable", async () => {
-      const mockError = new BuildExecutorError(
-        "URL rejected by SSRF guard",
-        "repo_url_rejected",
-      );
+      const mockError = new BuildExecutorError("URL rejected by SSRF guard", "repo_url_rejected");
       const executor = {
         build: vi.fn().mockRejectedValue(mockError),
       };
       const resolver = {
-        resolveDeployedHash: vi
-          .fn()
-          .mockResolvedValue("abc123def456"),
+        resolveDeployedHash: vi.fn().mockResolvedValue("abc123def456"),
       };
 
       const job: VerificationJobInput = {
@@ -266,9 +254,7 @@ describe("Verification with Retry Backoff (Issue #295)", () => {
         }),
       };
       const resolver = {
-        resolveDeployedHash: vi
-          .fn()
-          .mockResolvedValue("deployed_hash_abc"),
+        resolveDeployedHash: vi.fn().mockResolvedValue("deployed_hash_abc"),
       };
 
       const job: VerificationJobInput = {
@@ -367,7 +353,7 @@ describe("Verification with Retry Backoff (Issue #295)", () => {
         toolchainVersion: "21.0",
       };
 
-      const delays: number[] = [];
+      const delays: { attempt: number; delay: number }[] = [];
 
       // Run multiple retry attempts
       for (let attempt = 0; attempt < 4; attempt++) {
@@ -385,7 +371,7 @@ describe("Verification with Retry Backoff (Issue #295)", () => {
             delays.push({
               attempt,
               delay: outcome.retryDelayMs,
-            } as any);
+            });
           }
         }
       }
@@ -548,6 +534,12 @@ describe("Verification with Retry Backoff (Issue #295)", () => {
     });
   });
 
+  const repoJob: VerificationJobInput = {
+    contractId: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+    sourceType: "repo",
+    toolchainVersion: "21.0",
+  };
+
   // Issue #330 — a resolver timeout must NOT produce a terminal "failed"
   // verdict for a contract that may well be perfectly valid; it should be
   // retried, the same fallback path an unexpected error already gets.
@@ -561,7 +553,10 @@ describe("Verification with Retry Backoff (Issue #295)", () => {
     };
     const resolver = {
       async resolveDeployedHash(): Promise<string> {
-        throw new ArtifactResolveError("contract metadata lookup timed out after 10000ms", "timeout");
+        throw new ArtifactResolveError(
+          "contract metadata lookup timed out after 10000ms",
+          "timeout",
+        );
       },
     };
 
@@ -583,5 +578,95 @@ describe("Verification with Retry Backoff (Issue #295)", () => {
       expect(outcome.status).toBe("failed");
       expect(outcome.statusDetail).toContain(code);
     }
+  });
+
+  describe("Job signature verification hardening (Phase 7)", () => {
+    const jobSecret = "verification-worker-shared-secret-key-12345";
+    const resolver = {
+      async resolveDeployedHash(): Promise<string> {
+        return "11".repeat(32);
+      },
+    };
+    const executor = stubBuildExecutor();
+
+    it("rejects unsigned job payload when jobSecret is configured", async () => {
+      const outcome = await runVerification(repoJob, {
+        executor,
+        resolver,
+        jobSecret,
+      });
+      expect(outcome.status).toBe("failed");
+      expect(outcome.statusDetail).toContain("Signature verification failed (missing_signature)");
+      expect(outcome.isRetryable).toBe(false);
+    });
+
+    it("rejects tampered job payload", async () => {
+      const { signJobPayload } = await import("./job-signature");
+      const sig = signJobPayload(repoJob, jobSecret);
+      const tamperedJob: VerificationJobInput = {
+        ...repoJob,
+        commitHash: "ffffffffffffffffffffffffffffffffffffffff",
+        signature: sig,
+      };
+
+      const outcome = await runVerification(tamperedJob, {
+        executor,
+        resolver,
+        jobSecret,
+      });
+      expect(outcome.status).toBe("failed");
+      expect(outcome.statusDetail).toContain("Signature verification failed (invalid_signature)");
+      expect(outcome.isRetryable).toBe(false);
+    });
+
+    it("accepts validly signed job payload and runs verification", async () => {
+      const { signJobPayload } = await import("./job-signature");
+      const signedJob: VerificationJobInput = {
+        ...repoJob,
+        signature: signJobPayload(repoJob, jobSecret),
+      };
+
+      const outcome = await runVerification(signedJob, {
+        executor,
+        resolver,
+        jobSecret,
+      });
+      // Verification proceeds past signature check to hash comparison
+      expect(outcome.statusDetail).not.toContain("Signature verification failed");
+    });
+  });
+
+  // #420: pre-fetch failures get an actionable public status, but the public
+  // surface stays static text — the detail (hosts, IPs, URLs) is private (H3).
+  describe("offline dependency failures (#420)", () => {
+    const resolver = {
+      async resolveDeployedHash(): Promise<string> {
+        return "11".repeat(32);
+      },
+    };
+    const privateDetail =
+      "git fetch failed for dependency https://git.internal.example/r: fatal: unable to connect to 10.0.0.7";
+
+    it.each([
+      ["dependencies_unresolved", false, /Cargo\.lock/],
+      ["dependency_fetch_failed", true, /retried/],
+    ] as const)(
+      "%s → actionable, sanitized statusDetail (retryable=%s)",
+      async (code, retryable, hint) => {
+        const executor = {
+          async build(): Promise<never> {
+            throw new BuildExecutorError(privateDetail, code, `[prefetch] ${privateDetail}`);
+          },
+        };
+        const outcome = await runVerification(repoJob, { executor, resolver });
+        expect(outcome.status).toBe("failed");
+        expect(outcome.statusDetail).toContain(`Build failed (${code}).`);
+        expect(outcome.statusDetail).toMatch(hint);
+        expect(outcome.statusDetail).not.toContain("git.internal.example");
+        expect(outcome.statusDetail).not.toContain("10.0.0.7");
+        expect(outcome.log).toContain("10.0.0.7");
+        expect(outcome.isRetryable).toBe(retryable);
+      },
+    );
   });
 });

@@ -1,5 +1,10 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import type { VerificationRepository, VerificationRecordInternal } from "../server";
+import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import {
+  decodeVerificationCursor,
+  encodeVerificationCursor,
+  type VerificationRepository,
+  type VerificationRecordInternal,
+} from "../server";
 import type { Db } from "./client";
 import { verificationRecords } from "./schema";
 
@@ -62,6 +67,44 @@ export function createPgVerificationRepository(db: Db): VerificationRepository {
         )
         .limit(1);
       return rows.length > 0;
+    },
+    async listPage(filter) {
+      const conditions = [];
+      if (filter.status) conditions.push(eq(verificationRecords.status, filter.status));
+
+      if (filter.after) {
+        const decoded = decodeVerificationCursor(filter.after);
+        const afterCreatedAt = new Date(decoded.createdAt);
+        // Keyset predicate for (createdAt DESC, id DESC): strictly older
+        // createdAt, OR the same createdAt with a strictly smaller id,
+        // matching the ORDER BY below exactly (see wallet-service's
+        // activity_logs listPage and policy-service's policies listPage in
+        // this same batch for the same reasoning).
+        conditions.push(
+          or(
+            lt(verificationRecords.createdAt, afterCreatedAt),
+            and(eq(verificationRecords.createdAt, afterCreatedAt), lt(verificationRecords.id, decoded.id)),
+          ),
+        );
+      }
+
+      const rows = await db
+        .select()
+        .from(verificationRecords)
+        .where(conditions.length > 0 ? and(...conditions) : undefined)
+        .orderBy(desc(verificationRecords.createdAt), desc(verificationRecords.id))
+        .limit(filter.limit + 1);
+
+      const hasMore = rows.length > filter.limit;
+      const page = hasMore ? rows.slice(0, filter.limit) : rows;
+      const records = page.map((row) => row.record);
+      const last = page[page.length - 1];
+      return {
+        records,
+        hasMore,
+        nextCursor:
+          hasMore && last ? encodeVerificationCursor(last.createdAt.toISOString(), last.id) : undefined,
+      };
     },
   };
 }

@@ -50,7 +50,8 @@ export interface AnalyticsEvent {
  * @param value - The value to hash
  * @returns Hashed value (12 hex chars)
  */
-function hashSensitiveValue(value: string): string {
+function hashSensitiveValue(value?: string | null): string {
+  if (!value) return "";
   const hash = crypto.createHash("sha256").update(value).digest("hex");
   return hash.slice(0, 12);
 }
@@ -118,7 +119,9 @@ export function createAnalyticsTracker() {
     try {
       // In production, send to your analytics backend.
       // For now, we persist to localStorage for testing/inspection.
-      const stored = JSON.parse(localStorage.getItem("vellar.analytics.events") ?? "[]") as AnalyticsEvent[];
+      const stored = JSON.parse(
+        localStorage.getItem("vellar.analytics.events") ?? "[]",
+      ) as AnalyticsEvent[];
       stored.push(...events);
       // Keep only the last 1000 events in localStorage
       localStorage.setItem("vellar.analytics.events", JSON.stringify(stored.slice(-1000)));
@@ -136,8 +139,12 @@ export function createAnalyticsTracker() {
    * Hash a sensitive value (e.g., session ID) before emitting it in an event.
    * Use this to include correlation IDs without exposing sensitive material.
    */
-  function hashValue(value: string): string {
+  function hashValue(value?: string | null): string {
     return hashSensitiveValue(value);
+  }
+
+  function clearQueue(): void {
+    eventQueue.length = 0;
   }
 
   return {
@@ -145,7 +152,8 @@ export function createAnalyticsTracker() {
     flush,
     hashValue,
     pageSessionId,
-    getQueue: () => [...eventQueue], // For testing
+    getQueue: () => eventQueue, // For testing: returns array reference so tests can inspect or drain (.splice(0))
+    clearQueue,
   };
 }
 
@@ -190,10 +198,7 @@ export const walletCreationEvents = {
    * User clicks the "Create wallet" button and passkey prompt is about to open.
    * Includes whether a username was provided.
    */
-  createInitiated: (
-    options: { hasUsername: boolean },
-    context: Partial<EventContext>,
-  ) => {
+  createInitiated: (options: { hasUsername: boolean }, context: Partial<EventContext>) => {
     getAnalyticsTracker().emit(
       "wallet.creation.initiated",
       { hasUsername: options.hasUsername },
@@ -267,11 +272,7 @@ export const walletCreationEvents = {
    * before completion.
    */
   funnelAbandoned: (options: { step: string }, context: Partial<EventContext>) => {
-    getAnalyticsTracker().emit(
-      "wallet.funnel.abandoned",
-      { step: options.step },
-      context,
-    );
+    getAnalyticsTracker().emit("wallet.funnel.abandoned", { step: options.step }, context);
   },
 };
 
@@ -297,20 +298,14 @@ export const walletSignInEvents = {
   /**
    * Backend successfully authenticated the passkey and session restored.
    */
-  signinCompleted: (
-    options: { network: Network },
-    context: Partial<EventContext>,
-  ) => {
+  signinCompleted: (options: { network: Network }, context: Partial<EventContext>) => {
     getAnalyticsTracker().emit("wallet.signin.completed", { network: options.network }, context);
   },
 
   /**
    * Sign-in failed (e.g., passkey not found, network error).
    */
-  signinFailed: (
-    options: { failureReason: string },
-    context: Partial<EventContext>,
-  ) => {
+  signinFailed: (options: { failureReason: string }, context: Partial<EventContext>) => {
     getAnalyticsTracker().emit(
       "wallet.signin.failed",
       { failureReason: options.failureReason },

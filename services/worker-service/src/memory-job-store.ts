@@ -1,4 +1,5 @@
 import type { VerificationStatus } from "@vellar/types";
+import { attestedHash } from "./artifact";
 import { calculateBackoffDelay } from "./backoff";
 import type { ClaimedJob, ReapResult, VerificationJobStore } from "./job-store";
 import type { VerificationJobInput } from "./verify";
@@ -15,6 +16,7 @@ interface Row {
   submittedAtMs?: number;
   outputHash?: string;
   deployedHash?: string;
+  matchMode?: "exact" | "toolchain-metadata";
   log?: string;
   statusDetail?: string;
   /** When the record reached a terminal state — orders "latest per contract". */
@@ -56,7 +58,15 @@ export function createMemoryJobStore(): MemoryJobStore {
       return claimed;
     },
 
-    async reapStranded({ timeoutMs, maxAttempts, baseBackoffDelayMs = 1_000, maxBackoffDelayMs = 30_000, nowMs, onReclaimed, onDeadLettered }) {
+    async reapStranded({
+      timeoutMs,
+      maxAttempts,
+      baseBackoffDelayMs = 1_000,
+      maxBackoffDelayMs = 30_000,
+      nowMs,
+      onReclaimed,
+      onDeadLettered,
+    }) {
       const now = nowMs ?? Date.now();
       let reclaimed = 0;
       let deadLettered = 0;
@@ -75,7 +85,11 @@ export function createMemoryJobStore(): MemoryJobStore {
           row.startedBuildingAtMs = undefined;
           // Calculate exponential backoff delay for next reclaim
           const attempt = (row.attempts ?? 0) - 1; // attempts already incremented at claim
-          const backoffDelay = calculateBackoffDelay(attempt, baseBackoffDelayMs, maxBackoffDelayMs);
+          const backoffDelay = calculateBackoffDelay(
+            attempt,
+            baseBackoffDelayMs,
+            maxBackoffDelayMs,
+          );
           // In memory store, we'd apply this delay on next claim by checking timestamp
           // For test purposes, we just record the backoff happened
           reclaimed++;
@@ -110,6 +124,7 @@ export function createMemoryJobStore(): MemoryJobStore {
       row.status = result.status;
       row.outputHash = result.outputHash;
       row.deployedHash = result.deployedHash;
+      row.matchMode = result.matchMode;
       row.log = result.log;
       row.statusDetail = result.statusDetail;
       row.completedAtMs = Date.now();
@@ -129,8 +144,9 @@ export function createMemoryJobStore(): MemoryJobStore {
       const result: Array<{ contractId: string; outputHash: string }> = [];
       for (const row of latestByContract.values()) {
         if (result.length >= limit) break;
-        if (row.status === "verified" && row.outputHash) {
-          result.push({ contractId: row.job.contractId, outputHash: row.outputHash });
+        const hash = attestedHash(row);
+        if (row.status === "verified" && hash) {
+          result.push({ contractId: row.job.contractId, outputHash: hash });
         }
       }
       return result;

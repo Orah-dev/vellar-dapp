@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { Eyebrow } from "../landing/ui";
+import { Eyebrow, Frame } from "../landing/ui";
 import { OnboardingActions } from "../onboarding-actions";
 import "../landing/landing.css";
 import "@/components/app.css";
 
-// Wallet entry (/app): passkey onboarding (technical-doc.md §7.1) on the
+// Wallet entry (/app): passkey onboarding (design.md §7) on the
 // "paper & signals" system. The marketing landing lives at /.
 
 export default function AppEntry() {
@@ -26,9 +26,11 @@ export default function AppEntry() {
           seed phrase, no password, just you.
         </p>
       </div>
-      <div className="lpa-panel mx-auto mt-9 max-w-[480px]">
-        <OnboardingActions />
-      </div>
+      <Frame className="mx-auto mt-9 max-w-[480px]">
+        <div className="lpa-panel">
+          <OnboardingActions />
+        </div>
+      </Frame>
     </main>
   );
 }

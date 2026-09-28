@@ -18,6 +18,7 @@
     "fastify": "^5.12.3",
     "passkey-kit": "^0.14.0",
     "pg": "^8.22.0",
+    "prom-client": "^15.1.3",
     "zod": "^4.0.0"
   },
   "devDependencies": {

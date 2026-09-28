@@ -6,8 +6,10 @@ import {
   portFromEnv,
   resolveNetwork,
   resolvePersistencePolicy,
+  signingKeyFromEnv,
   startService,
   tryConnectDb,
+  verifySigningKeys,
   type SpendBudget,
 } from "@vellar/service-kit";
 import type { DbHandle } from "./db/client";
@@ -89,11 +91,38 @@ deps.isReady = dbHandle ? () => dbHandle!.ping() : () => policy.action === "allo
 // refuses to boot — a service that can't tell which network it's on must not
 // meter spend or stamp a deploy 'deployed'. Server config, never a request body
 // (V5).
-deps.budgetNetwork = resolveNetwork({
+const network = resolveNetwork({
   network: process.env.STELLAR_NETWORK,
   passphrase: config.networkPassphrase,
   rpcUrl: config.rpcUrl,
 });
+deps.budgetNetwork = network;
+
+// Q3 (architecture-analysis.md §8): the sponsor secret that funds
+// /deploy-instance is set out-of-band — confirm it is the pinned account for
+// the declared network before the deployer can spend with it. Same guard as
+// wallet-service (which also runs the on-chain probe in the combined backend).
+{
+  const { Keypair } = await import("@stellar/stellar-sdk");
+  try {
+    const report = verifySigningKeys({
+      network,
+      keys: [signingKeyFromEnv("sponsor")],
+      derivePublicKey: (secret) => Keypair.fromSecret(secret).publicKey(),
+      allowUnpinned: process.env.ALLOW_UNPINNED_SIGNING_KEYS === "1",
+    });
+    for (const key of report.keys) {
+      console.info(
+        `[policy-service] ${key.role} key ${key.publicKey} accepted for ${report.network}` +
+          (key.pinned ? " (pinned)." : " (UNPINNED — testnet or explicit override)."),
+      );
+    }
+  } catch (err) {
+    console.error(`[policy-service] ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
+
 const budget: SpendBudget = dbHandle
   ? createPgSpendBudget(dbHandle.db, { windowMs: BUDGET_WINDOW_MS, limits: deployLimits })
   : createUnavailableBudget();

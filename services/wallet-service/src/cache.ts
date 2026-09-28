@@ -38,10 +38,7 @@ export class MemoryCacheStore implements CacheOperation {
     return Date.now() > entry.expiresAt;
   }
 
-  async get<T = unknown>(
-    resource: CacheResourceType,
-    key: string,
-  ): Promise<CacheGetResult<T>> {
+  async get<T = unknown>(resource: CacheResourceType, key: string): Promise<CacheGetResult<T>> {
     const fullKey = this.makeKey(resource, key);
     const entry = this.store.get(fullKey);
 
@@ -57,11 +54,7 @@ export class MemoryCacheStore implements CacheOperation {
     return { hit: true, value: entry.value as T };
   }
 
-  async set<T = unknown>(
-    resource: CacheResourceType,
-    key: string,
-    value: T,
-  ): Promise<void> {
+  async set<T = unknown>(resource: CacheResourceType, key: string, value: T): Promise<void> {
     const fullKey = this.makeKey(resource, key);
     this.store.set(fullKey, {
       value,
@@ -110,15 +103,15 @@ export class MemoryCacheStore implements CacheOperation {
  * Create a no-op cache (useful for testing or when caching is disabled).
  */
 export class NoOpCache implements CacheOperation {
-  async get<T = unknown>(): Promise<CacheGetResult<T>> {
+  async get<T = unknown>(_resource: CacheResourceType, _key: string): Promise<CacheGetResult<T>> {
     return { hit: false };
   }
 
-  async set<T = unknown>(): Promise<void> {
+  async set<T = unknown>(_resource: CacheResourceType, _key: string, _value: T): Promise<void> {
     // no-op
   }
 
-  async delete(): Promise<void> {
+  async delete(_resource: CacheResourceType, _key: string): Promise<void> {
     // no-op
   }
 }

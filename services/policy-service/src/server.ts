@@ -10,16 +10,27 @@ import {
   logEvent,
   type SpendBudget,
   type BudgetNetwork,
+  registerTracing,
 } from "@vellar/service-kit";
 import type { PolicyDefinition } from "@vellar/types";
 import { PolicyDeployError, type PolicyDeployer } from "./deploy";
 import { generatePolicy, templates, type GeneratedPolicy } from "./templates";
-import {
-  AttachMismatchError,
-  AttachUnconfirmedError,
-  type TxLookup,
-} from "./verify-attach";
+import { AttachMismatchError, AttachUnconfirmedError, type TxLookup } from "./verify-attach";
 import { createCsrfPreHandler, generateCsrfToken } from "./csrf";
+import {
+  deployBodySchema,
+  deployInstanceBodySchema,
+  generateBodySchema,
+  validateDefinition,
+  validatePolicyForDeployment,
+  validatePolicyInstance,
+} from "./validation";
+import {
+  deployPolicyInstance,
+  simulatePolicyDeploy,
+  verifyAndRecordAttach,
+  type DeploymentDeps,
+} from "./deployment";
 
 // Policy API (idea.md §11): validate → generate → (review) → deploy.
 // Generated policies persist for review/deploy (idea.md §9 policies table —
@@ -38,10 +49,55 @@ export interface PolicyRecord extends GeneratedPolicy {
   deployment?: { contractId?: string; txHash: string; deployedAt: string };
 }
 
+/** Opaque pagination cursor for PolicyRepository.listPage (issue #257):
+ * callers pass back a previous page's nextCursor verbatim. */
+export type PolicyCursor = string;
+
+export interface PolicyPage {
+  policies: PolicyRecord[];
+  hasMore: boolean;
+  /** Present iff hasMore; pass to the next call's `after` filter. */
+  nextCursor?: PolicyCursor;
+}
+
+export interface PolicyListFilter {
+  /** Real status vocabulary (see PolicyRecord.status): "generated",
+   * "instance_deployed", or "deployed". Issue #257 named "active"/"draft"/
+   * "revoked" as examples, but those values do not exist anywhere in this
+   * codebase's actual status lifecycle (see docs/decisions.md) — this
+   * filters on the real values, not the issue's stale examples. */
+  status?: PolicyRecord["status"];
+  /** Inclusive lower bound on createdAt (ISO 8601). */
+  createdAfter?: string;
+  /** Inclusive upper bound on createdAt (ISO 8601). */
+  createdBefore?: string;
+  limit: number;
+  after?: PolicyCursor;
+}
+
 export interface PolicyRepository {
   insert(record: PolicyRecord): Promise<void>;
   find(id: string): Promise<PolicyRecord | undefined>;
   update(record: PolicyRecord): Promise<void>;
+  /** Cursor-paginated, newest-first list (issue #257). */
+  listPage(filter: PolicyListFilter): Promise<PolicyPage>;
+}
+
+/** Encodes a (createdAt, id) keyset position as an opaque cursor token.
+ * Exported for reuse by createPgPolicyRepository, which needs the same
+ * encoding for its SQL keyset query to interoperate with a cursor produced
+ * by either implementation. */
+export function encodePolicyCursor(createdAt: string, id: string): PolicyCursor {
+  return Buffer.from(`${createdAt}:${id}`, "utf8").toString("base64url");
+}
+
+export function decodePolicyCursor(cursor: PolicyCursor): { createdAt: string; id: string } {
+  const decoded = Buffer.from(cursor, "base64url").toString("utf8");
+  const sep = decoded.lastIndexOf(":");
+  if (sep <= 0 || sep === decoded.length - 1) {
+    throw new Error("malformed policy cursor");
+  }
+  return { createdAt: decoded.slice(0, sep), id: decoded.slice(sep + 1) };
 }
 
 export function createMemoryPolicyRepository(): PolicyRepository {
@@ -56,10 +112,40 @@ export function createMemoryPolicyRepository(): PolicyRepository {
     async update(record) {
       records.set(record.id, record);
     },
+    async listPage(filter) {
+      let filtered = [...records.values()];
+      if (filter.status) filtered = filtered.filter((r) => r.status === filter.status);
+      if (filter.createdAfter) filtered = filtered.filter((r) => r.createdAt >= filter.createdAfter!);
+      if (filter.createdBefore) filtered = filtered.filter((r) => r.createdAt <= filter.createdBefore!);
+
+      // Newest first: (createdAt, id) descending — id is the tiebreaker for a
+      // shared createdAt, same reasoning as wallet-service's activity log
+      // pagination (see repository.ts there): createdAt alone is not a total
+      // order, so a page boundary landing on a tie could skip or repeat a row.
+      filtered.sort((a, b) => {
+        if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
+        return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+      });
+
+      if (filter.after) {
+        const decoded = decodePolicyCursor(filter.after);
+        filtered = filtered.filter((r) => {
+          if (r.createdAt !== decoded.createdAt) return r.createdAt < decoded.createdAt;
+          return r.id < decoded.id;
+        });
+      }
+
+      const hasMore = filtered.length > filter.limit;
+      const page = hasMore ? filtered.slice(0, filter.limit) : filtered;
+      const last = page[page.length - 1];
+      return {
+        policies: page,
+        hasMore,
+        nextCursor: hasMore && last ? encodePolicyCursor(last.createdAt, last.id) : undefined,
+      };
+    },
   };
 }
-
-
 
 export interface PolicyServiceDeps {
   policies?: PolicyRepository;
@@ -102,7 +188,19 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
   const csrfSecret =
     deps.csrfSecret ?? process.env.CSRF_SECRET ?? "vellar-policy-admin-csrf-default-secret";
 
+  const deploymentDeps: DeploymentDeps = {
+    policies,
+    deployer,
+    verifyAttach,
+    budget: deps.budget,
+    budgetNetwork: deps.budgetNetwork,
+    network,
+    networkPassphrase,
+    now,
+  };
+
   const app = Fastify({ logger: true });
+  registerTracing(app, "policy-service");
   registerHealth(app, "policy-service", { isReady: deps.isReady });
   registerMetrics(app, "policy-service");
 
@@ -163,6 +261,70 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
     await policies.insert(record);
     return reply.code(201).send({ policy: record });
   });
+
+  // Batch endpoint for submitting multiple policy templates (#261)
+  const MAX_BATCH_SIZE = 50;
+  app.post("/policies/batch", async (request, reply) => {
+    const body = request.body as { templates?: Array<{ definition?: unknown; network?: string }> };
+    if (!body || !Array.isArray(body.templates) || body.templates.length === 0) {
+      return reply.code(400).send({ error: "invalid_body", message: "Expected a non-empty templates array" });
+    }
+
+    if (body.templates.length > MAX_BATCH_SIZE) {
+      return reply.code(400).send({
+        error: "batch_size_exceeded",
+        message: `Maximum batch size is ${MAX_BATCH_SIZE}`,
+      });
+    }
+
+    const results = await Promise.all(
+      body.templates.map(async (item, index) => {
+        const validation = validateDefinition(item.definition);
+        if (!validation.valid) {
+          return {
+            index,
+            success: false,
+            error: "invalid_policy",
+            details: validation.errors,
+          };
+        }
+
+        try {
+          const generated = generatePolicy(
+            item.definition as PolicyDefinition,
+            item.network,
+          );
+          const record: PolicyRecord = {
+            id: randomUUID(),
+            createdAt: now().toISOString(),
+            status: "generated",
+            ...generated,
+          };
+          await policies.insert(record);
+          return {
+            index,
+            success: true,
+            policy: record,
+          };
+        } catch (err) {
+          return {
+            index,
+            success: false,
+            error: err instanceof Error ? err.message : "generation_failed",
+          };
+        }
+      })
+    );
+
+    const hasFailures = results.some((r) => !r.success);
+    return reply.code(hasFailures ? 207 : 200).send({
+      total: results.length,
+      successful: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
+      results,
+    });
+  });
+
 
   // Dry-run the instance deploy (build + simulate, no submit) so the UI can
   // confirm the deploy will succeed and show the resource cost before the user
@@ -229,10 +391,14 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
     }
 
     try {
-      const { record: updated, contractId } = await deployPolicyInstance(
-        deploymentDeps,
-        record,
-        parsed.data.wallet,
+      // #301: the sponsor-funded deploy is the slow, failure-prone hop — give it
+      // its own span under this request's server span.
+      const { record: updated, contractId } = await withTraceSpan(
+        "policy-service",
+        "policy.deploy-instance",
+        request.traceContext ?? extractTraceContext(request.headers),
+        () => deployPolicyInstance(deploymentDeps, record, parsed.data.wallet),
+        { policyId: id },
       );
       return reply.send({ policy: updated, contractId });
     } catch (err) {
@@ -247,8 +413,12 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
           message: "Policy-deploy budget reached; try again later.",
         });
       }
-      // Budget accounting error or other unexpected error
+      // Any other failure (e.g. an RPC error the deployer didn't wrap) MUST
+      // still answer with an error status. Falling through used to resolve the
+      // handler with no body — an empty 200 the client read as a successful
+      // deploy with contractId undefined.
       request.log.error(err, "deploy-instance failed");
+      return reply.code(500).send({ error: "deploy_failed" });
     }
   });
 
@@ -303,6 +473,86 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
       }
       throw err;
     }
+  });
+
+  const VALID_POLICY_STATUSES = new Set<PolicyRecord["status"]>([
+    "generated",
+    "instance_deployed",
+    "deployed",
+  ]);
+  const POLICY_LIST_DEFAULT_LIMIT = 20;
+  const POLICY_LIST_MAX_LIMIT = 100;
+
+  // Cursor-paginated policy list with status + date-range filtering (issue
+  // #257). "active"/"draft"/"revoked" from the issue's own examples do not
+  // exist in this codebase's status lifecycle (see PolicyRecord.status);
+  // this validates against the real values instead.
+  app.get("/policies", async (request, reply) => {
+    const query = request.query as Record<string, string | undefined>;
+
+    let status: PolicyRecord["status"] | undefined;
+    if (query.status !== undefined) {
+      if (!VALID_POLICY_STATUSES.has(query.status as PolicyRecord["status"])) {
+        return reply.code(400).send({
+          error: "invalid_status",
+          message: `status must be one of: ${[...VALID_POLICY_STATUSES].join(", ")}`,
+        });
+      }
+      status = query.status as PolicyRecord["status"];
+    }
+
+    const INVALID = Symbol("invalid_date");
+    const parseDateParam = (name: "created_after" | "created_before"): string | undefined | typeof INVALID => {
+      const raw = query[name];
+      if (raw === undefined) return undefined;
+      const parsed = new Date(raw);
+      if (Number.isNaN(parsed.getTime())) return INVALID;
+      return parsed.toISOString();
+    };
+
+    const createdAfter = parseDateParam("created_after");
+    if (createdAfter === INVALID) {
+      return reply.code(400).send({ error: "invalid_created_after", message: "created_after must be a valid date" });
+    }
+    const createdBefore = parseDateParam("created_before");
+    if (createdBefore === INVALID) {
+      return reply
+        .code(400)
+        .send({ error: "invalid_created_before", message: "created_before must be a valid date" });
+    }
+    if (createdAfter && createdBefore && createdAfter > createdBefore) {
+      return reply.code(400).send({
+        error: "invalid_date_range",
+        message: "created_after must not be after created_before",
+      });
+    }
+
+    let limit = POLICY_LIST_DEFAULT_LIMIT;
+    if (query.limit !== undefined) {
+      const parsedLimit = Number(query.limit);
+      if (!Number.isInteger(parsedLimit) || parsedLimit <= 0) {
+        return reply.code(400).send({ error: "invalid_limit", message: "limit must be a positive integer" });
+      }
+      limit = Math.min(parsedLimit, POLICY_LIST_MAX_LIMIT);
+    }
+
+    let page;
+    try {
+      page = await policies.listPage({
+        status,
+        createdAfter: createdAfter as string | undefined,
+        createdBefore: createdBefore as string | undefined,
+        limit,
+        after: query.cursor,
+      });
+    } catch {
+      return reply.code(400).send({ error: "invalid_cursor", message: "cursor is not a valid pagination cursor" });
+    }
+    return reply.send({
+      policies: page.policies,
+      hasMore: page.hasMore,
+      nextCursor: page.nextCursor ?? null,
+    });
   });
 
   app.get("/policies/:id", async (request, reply) => {
@@ -364,10 +614,14 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
 
     let result: { contractId: string; txHash: string };
     try {
-      result = await deployer.deployInstance({
-        wallet: parsed.data.wallet,
-        constructorArgs: enforcement.constructorArgs,
-      });
+      const constructorArgs = enforcement.constructorArgs;
+      result = await withTraceSpan(
+        "policy-service",
+        "policy.deploy-instance",
+        request.traceContext ?? extractTraceContext(request.headers),
+        () => deployer.deployInstance({ wallet: parsed.data.wallet, constructorArgs }),
+        { policyId: id, admin: true },
+      );
     } catch (err) {
       if (err instanceof PolicyDeployError) {
         request.log.error({ err, policyId: id }, "policy instance deploy failed");
@@ -399,7 +653,7 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
       deployedAt: now().toISOString(),
     };
     await policies.update(record);
-    
+
     // Issue #347: emit analytics event for successful policy template deployment
     logEvent(request.log, "policy.deployed", {
       policyId: record.id,
@@ -407,7 +661,7 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
       walletId: record.instance?.wallet,
       deployedAt: record.deployment.deployedAt,
     });
-    
+
     return reply.send({ policy: record });
   });
 

@@ -1,6 +1,6 @@
 /**
  * Admin API endpoints for Dead-Letter Queue management.
- * 
+ *
  * Requires admin authentication. All operations are idempotent and audited.
  * - GET /admin/dlq — list DLQ entries with filtering/pagination
  * - GET /admin/dlq/:id — inspect a specific DLQ entry
@@ -11,7 +11,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import type { DeployJobStore } from "./policy-deploy-worker";
+import type { DeployJobStore, DLQMetrics } from "./policy-deploy-worker";
 import type { DLQStore, DLQRecord } from "./dlq-store";
 import type { PolicyRepository } from "./server";
 
@@ -20,7 +20,7 @@ export interface AdminDLQDeps {
   jobStore: DeployJobStore;
   policyRepo: PolicyRepository;
   /** Optional metric for requeue tracking */
-  dlqMetrics?: { dlq_requeue_total: { inc(labels: { job_type: string }): void } };
+  dlqMetrics?: Pick<DLQMetrics, "dlq_requeue_total">;
   /** Admin user extractor from request; returns user id or undefined if not admin */
   getAdminUser?: (request: FastifyRequest) => string | undefined;
 }
@@ -66,31 +66,30 @@ export function registerAdminDLQRoutes(app: FastifyInstance, deps: AdminDLQDeps)
   /**
    * GET /admin/dlq — List DLQ entries
    */
-  app.get<{ Querystring: { job_type?: string; limit?: string; offset?: string; archived?: string } }>(
-    "/admin/dlq",
-    async (request, reply) => {
-      const userId = await requireAdmin(request, reply);
-      if (typeof userId !== "string") return; // Auth failed
+  app.get<{
+    Querystring: { job_type?: string; limit?: string; offset?: string; archived?: string };
+  }>("/admin/dlq", async (request, reply) => {
+    const userId = await requireAdmin(request, reply);
+    if (typeof userId !== "string") return; // Auth failed
 
-      const limit = request.query.limit ? parseInt(request.query.limit, 10) : 50;
-      const offset = request.query.offset ? parseInt(request.query.offset, 10) : 0;
-      const includeArchived = request.query.archived === "true";
+    const limit = request.query.limit ? parseInt(request.query.limit, 10) : 50;
+    const offset = request.query.offset ? parseInt(request.query.offset, 10) : 0;
+    const includeArchived = request.query.archived === "true";
 
-      const result = await dlqStore.list({
-        jobType: request.query.job_type,
-        limit,
-        offset,
-        includeArchived,
-      });
+    const result = await dlqStore.list({
+      jobType: request.query.job_type,
+      limit,
+      offset,
+      includeArchived,
+    });
 
-      return reply.send({
-        entries: result.entries.map(redactDLQRecord),
-        total: result.total,
-        limit,
-        offset,
-      });
-    },
-  );
+    return reply.send({
+      entries: result.entries.map(redactDLQRecord),
+      total: result.total,
+      limit,
+      offset,
+    });
+  });
 
   /**
    * GET /admin/dlq/:id — Inspect a specific DLQ entry
@@ -121,7 +120,7 @@ export function registerAdminDLQRoutes(app: FastifyInstance, deps: AdminDLQDeps)
 
   /**
    * POST /admin/dlq/:id/requeue — Requeue a DLQ entry
-   * 
+   *
    * Idempotent: safe to retry on failure
    */
   app.post<{ Params: { id: string } }>("/admin/dlq/:id/requeue", async (request, reply) => {
@@ -130,7 +129,7 @@ export function registerAdminDLQRoutes(app: FastifyInstance, deps: AdminDLQDeps)
 
     const dlqId = request.params.id;
 
-    const dlqRecord = await dlqStore.find(dlqId);
+    const dlqRecord = await dlqStore.find(dlqId, { includeArchived: true });
     if (!dlqRecord) {
       return reply.code(404).send({ error: "not_found", message: "DLQ entry not found" });
     }
@@ -152,7 +151,10 @@ export function registerAdminDLQRoutes(app: FastifyInstance, deps: AdminDLQDeps)
 
     try {
       // Mark requeue in progress (atomically)
-      await dlqStore.update(dlqId, { requeue_in_progress: true, updated_at: new Date().toISOString() });
+      await dlqStore.update(dlqId, {
+        requeue_in_progress: true,
+        updated_at: new Date().toISOString(),
+      });
 
       // Extract payload and create new job
       const payload = dlqRecord.payload as Record<string, unknown>;
@@ -169,7 +171,7 @@ export function registerAdminDLQRoutes(app: FastifyInstance, deps: AdminDLQDeps)
         updated_at: now,
       });
 
-      if (dlqMetrics) {
+      if (dlqMetrics?.dlq_requeue_total) {
         dlqMetrics.dlq_requeue_total.inc({ job_type: dlqRecord.job_type });
       }
 
@@ -191,7 +193,10 @@ export function registerAdminDLQRoutes(app: FastifyInstance, deps: AdminDLQDeps)
       });
     } catch (err) {
       // Mark requeue as not in progress on failure
-      await dlqStore.update(dlqId, { requeue_in_progress: false, updated_at: new Date().toISOString() });
+      await dlqStore.update(dlqId, {
+        requeue_in_progress: false,
+        updated_at: new Date().toISOString(),
+      });
 
       await dlqStore.recordAudit({
         dlq_id: dlqId,

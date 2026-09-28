@@ -1,8 +1,18 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hashArtifact } from "./artifact";
+import {
+  CONTAINER_DEPS_DIR,
+  DependencyPrefetchError,
+  hermeticCargoConfig,
+  hermeticGitConfig,
+  HERMETIC_GIT_ENV,
+  prefetchCargoDependencies,
+  type PrefetchResult,
+} from "./cargo-prefetch";
 import {
   assertPublicHttpsRepoUrl,
   gitConnectionPinArgs,
@@ -57,7 +67,9 @@ export class BuildExecutorError extends Error {
       | "build_failed"
       | "artifact_missing"
       | "unsupported_source"
-      | "repo_url_rejected",
+      | "repo_url_rejected"
+      | "dependencies_unresolved"
+      | "dependency_fetch_failed",
     readonly log = "",
   ) {
     super(message);
@@ -126,6 +138,10 @@ export interface DockerBuildExecutorConfig {
   cpus?: string;
   /** Max processes in the container (fork-bomb guard). Default 512. */
   pidsLimit?: number;
+  /** Container tmpfs size cap for /tmp (e.g. "512m"). Default "512m". */
+  tmpfsSize?: string;
+  /** Storage driver options (e.g. "size=10G" for disk limits). */
+  storageOpt?: string;
   /** Extra args passed to `stellar contract build` (e.g. a package selector). */
   buildArgs?: string[];
   /** Injected for tests; defaults to spawning real processes. `timeoutMs`, when
@@ -141,6 +157,9 @@ export interface DockerBuildExecutorConfig {
    * so tests don't hit the network. Throws RepoUrlError to reject, else returns
    * the validated pin (undefined for an IP-literal host). */
   assertRepoUrl?: (repoUrl: string) => Promise<ResolvedPin | undefined>;
+  /** Dependency pre-fetch (#420); defaults to the guarded Cargo.lock pre-fetch.
+   * Injected so unit tests that only inspect command wiring need no network. */
+  prefetch?: (repoDir: string, depsDir: string) => Promise<PrefetchResult>;
 }
 
 /**
@@ -159,7 +178,14 @@ export function dockerBuildExecutor(config: DockerBuildExecutorConfig): BuildExe
   const memory = config.memory ?? "2g";
   const cpus = config.cpus ?? "2";
   const pidsLimit = config.pidsLimit ?? 512;
+  const tmpfsSize = config.tmpfsSize ?? "512m";
+  const storageOpt = config.storageOpt;
   const run = config.run ?? defaultRun;
+  const assertRepoUrl = config.assertRepoUrl ?? assertPublicHttpsRepoUrl;
+  const prefetch =
+    config.prefetch ??
+    ((repoDir: string, depsDir: string) =>
+      prefetchCargoDependencies(repoDir, depsDir, { run, assertUrl: assertRepoUrl }));
 
   return {
     async build(input) {
@@ -174,7 +200,6 @@ export function dockerBuildExecutor(config: DockerBuildExecutorConfig): BuildExe
       // before cloning, rejecting private/loopback/link-local answers. The guard
       // RETURNS the validated address so we can pin git's connection to it — git
       // otherwise resolves the hostname again independently (the TOCTOU window).
-      const assertRepoUrl = config.assertRepoUrl ?? assertPublicHttpsRepoUrl;
       let pin: ResolvedPin | undefined;
       try {
         pin = await assertRepoUrl(input.repoUrl);
@@ -221,24 +246,67 @@ export function dockerBuildExecutor(config: DockerBuildExecutorConfig): BuildExe
           throw new BuildExecutorError("git checkout failed", "clone_failed", log.join("\n"));
         }
 
+        // Dependency pre-fetch (#420): the ONLY post-clone stage with network,
+        // and it runs no submitted code — Cargo.lock is read as data and every
+        // host is either a fixed crates.io host or a guard-validated, pinned git
+        // URL (cargo-prefetch.ts). Everything lands outside the repo checkout,
+        // so the submission cannot pre-plant or overwrite it.
+        const depsDir = join(workdir, "deps");
+        const cargoHome = join(workdir, "cargo-home");
+        let prefetched: PrefetchResult;
+        try {
+          prefetched = await prefetch(repoDir, depsDir);
+        } catch (err) {
+          if (err instanceof DependencyPrefetchError) {
+            // No fallback: a submission whose dependencies cannot be resolved
+            // here never reaches a build, networked or otherwise.
+            log.push(`[prefetch] ${err.message}`);
+            throw new BuildExecutorError(err.message, err.code, log.join("\n"));
+          }
+          throw err;
+        }
+        log.push(prefetched.log);
+        await mkdir(depsDir, { recursive: true });
+        await mkdir(cargoHome, { recursive: true });
+        await writeFile(join(cargoHome, "config.toml"), hermeticCargoConfig());
+        await writeFile(join(depsDir, "gitconfig"), hermeticGitConfig(prefetched.plan));
+        // The container runs as 1000:1000, not the worker's uid, and must write
+        // target/ and its CARGO_HOME. Both sit inside the 0700 mkdtemp workdir,
+        // so opening them up does not expose them to other host users.
+        await chmod(repoDir, 0o777);
+        await chmod(cargoHome, 0o777);
+
         // Build inside the toolchain container under strict isolation (§8.4 —
         // the build runs UNTRUSTED, submitter-provided code):
-        //   --network=none        no network (hermetic + can't exfiltrate/attack)
+        //   --network=none        no network at all: the build has only the
+        //                         pre-fetched deps. Hard-coded, not configurable,
+        //                         and there is no networked retry (#420).
         //   --memory/--cpus       cap resources so one build can't starve the host
         //   --pids-limit          fork-bomb guard
-        //   --read-only           root FS is immutable; only the mounted repo +
-        //                         a tmpfs /tmp are writable, so untrusted code
-        //                         can't tamper with the toolchain image
+        //   --read-only           root FS is immutable; only the mounted repo, a
+        //                         per-build CARGO_HOME and a tmpfs /tmp are
+        //                         writable, so untrusted code can't tamper with
+        //                         the toolchain image
+        //   /deps:ro              pre-fetched registry + git mirrors, read-only
         //   --cap-drop=ALL        drop every Linux capability
         //   --security-opt no-new-privileges  block setuid privilege escalation
         //   --user 1000:1000      non-root
+        //   --locked              build exactly what Cargo.lock (and so the
+        //                         pre-fetch) pinned
         // The build is also time-bounded (timeoutSeconds) so it can't hang the
-        // worker forever.
+        // worker forever; the container is named so a timeout can remove it.
+        const containerName = `vellar-build-${randomUUID()}`;
+        const envArgs = Object.entries({
+          CARGO_HOME: "/cargo-home",
+          ...HERMETIC_GIT_ENV,
+        }).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
         const build = await run(
           "docker",
           [
             "run",
             "--rm",
+            "--name",
+            containerName,
             "--network=none",
             "--memory",
             memory,
@@ -250,7 +318,8 @@ export function dockerBuildExecutor(config: DockerBuildExecutorConfig): BuildExe
             String(pidsLimit),
             "--read-only",
             "--tmpfs",
-            "/tmp:exec",
+            `/tmp:exec,size=${tmpfsSize}`,
+            ...(storageOpt ? ["--storage-opt", storageOpt] : []),
             "--cap-drop=ALL",
             "--security-opt",
             "no-new-privileges",
@@ -258,12 +327,18 @@ export function dockerBuildExecutor(config: DockerBuildExecutorConfig): BuildExe
             "1000:1000",
             "-v",
             `${repoDir}:/work`,
+            "-v",
+            `${depsDir}:${CONTAINER_DEPS_DIR}:ro`,
+            "-v",
+            `${cargoHome}:/cargo-home`,
+            ...envArgs,
             "-w",
             "/work",
             config.image,
             "stellar",
             "contract",
             "build",
+            "--locked",
             ...(config.buildArgs ?? []),
           ],
           repoDir,
@@ -271,6 +346,8 @@ export function dockerBuildExecutor(config: DockerBuildExecutorConfig): BuildExe
         );
         log.push(build.out);
         if (build.timedOut) {
+          // Killing the docker CLI does not stop the container; remove it.
+          await run("docker", ["rm", "-f", containerName], repoDir);
           throw new BuildExecutorError(
             `build exceeded the ${timeoutSeconds}s timeout and was killed`,
             "build_failed",
@@ -338,7 +415,7 @@ async function findReleaseWasm(
   return join(repoDir, paths[0]!);
 }
 
-function defaultRun(
+export function defaultRun(
   cmd: string,
   args: string[],
   cwd: string,
@@ -353,8 +430,8 @@ function defaultRun(
     if (timeoutMs && timeoutMs > 0) {
       timer = setTimeout(() => {
         timedOut = true;
-        // SIGKILL the process group; `docker run --rm` tears down the container
-        // when its client process dies, so the build stops too.
+        // SIGKILL the child. For `docker run` this kills only the CLI; the
+        // executor removes the (named) container itself.
         child.kill("SIGKILL");
       }, timeoutMs);
     }

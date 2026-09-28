@@ -30,9 +30,9 @@ describe("retryWithBackoff — basic behaviour", () => {
     const fn = vi.fn(async () => {
       throw err;
     });
-    await expect(
-      retryWithBackoff(fn, { maxAttempts: 3, sleep: fastSleep }),
-    ).rejects.toBeInstanceOf(MaxRetriesExceededError);
+    await expect(retryWithBackoff(fn, { maxAttempts: 3, sleep: fastSleep })).rejects.toBeInstanceOf(
+      MaxRetriesExceededError,
+    );
     expect(fn).toHaveBeenCalledTimes(3);
   });
 
@@ -42,9 +42,7 @@ describe("retryWithBackoff — basic behaviour", () => {
     const fn = vi.fn(async () => {
       throw call++ === 0 ? new Error("first") : lastErr;
     });
-    const caught = await retryWithBackoff(fn, { maxAttempts: 2, sleep: fastSleep }).catch(
-      (e) => e,
-    );
+    const caught = await retryWithBackoff(fn, { maxAttempts: 2, sleep: fastSleep }).catch((e) => e);
     expect(caught).toBeInstanceOf(MaxRetriesExceededError);
     expect((caught as MaxRetriesExceededError).cause).toBe(lastErr);
   });
@@ -53,9 +51,7 @@ describe("retryWithBackoff — basic behaviour", () => {
     const fn = vi.fn(async () => {
       throw new Error("fail");
     });
-    const caught = await retryWithBackoff(fn, { maxAttempts: 1, sleep: fastSleep }).catch(
-      (e) => e,
-    );
+    const caught = await retryWithBackoff(fn, { maxAttempts: 1, sleep: fastSleep }).catch((e) => e);
     expect(caught).toBeInstanceOf(MaxRetriesExceededError);
     expect(fn).toHaveBeenCalledTimes(1);
   });

@@ -32,6 +32,7 @@ scraper can watch it. In the `all-in-one` process, scrape the gateway's
 
 **Standardized Metrics Naming Convention (Issue #300):**
 All custom application metrics adhere to `vela_<subsystem>_<metric_name>_<unit_or_type>`:
+
 - `<subsystem>`: identifies service component (`http`, `wallet`, `policy`, `worker`, `lifecycle`, `rpc`).
 - `<metric_name>`: snake_case identifier (`created`, `passkey_auth`, `poison_messages`, etc.).
 - `<unit_or_type>`: `_total` (counters), `_seconds` (durations/turnaround), `_depth` (queue sizes), `_lag_seconds` (processing lag).
@@ -41,8 +42,8 @@ All custom application metrics adhere to `vela_<subsystem>_<metric_name>_<unit_o
 | Metric                                        | Emitted by        | §13 line / Subsystem              |
 | --------------------------------------------- | ----------------- | --------------------------------- |
 | `vela_wallet_created_total`                   | wallet-service    | wallet creation success rate      |
-| `vela_wallet_passkey_auth_total`             | wallet-service    | passkey auth success/failure rate |
-| `vela_wallet_tx_signed_total`                | wallet-service    | tx signing completion rate        |
+| `vela_wallet_passkey_auth_total`              | wallet-service    | passkey auth success/failure rate |
+| `vela_wallet_tx_signed_total`                 | wallet-service    | tx signing completion rate        |
 | `vela_policy_deployed_total`                  | policy-service    | policy generation/deploy rate     |
 | `vela_policy_poison_messages_total`           | policy-service    | event queue poison message count  |
 | `vela_worker_verification_total`              | worker-service    | verification outcomes             |
@@ -50,7 +51,7 @@ All custom application metrics adhere to `vela_<subsystem>_<metric_name>_<unit_o
 | `vela_lifecycle_cleanup_completed_total`      | lifecycle-service | cleanup completion rate           |
 | `vela_rpc_errors_total{upstream}`             | wallet + worker   | RPC degradation / worker failures |
 | `vela_worker_queue_depth`                     | worker-service    | queue depth (pending jobs)        |
-| `vela_worker_processing_lag_seconds`         | worker-service    | submit-to-pickup processing lag   |
+| `vela_worker_processing_lag_seconds`          | worker-service    | submit-to-pickup processing lag   |
 
 A "rate" is computed in the query layer, e.g. success rate over 5m:
 
@@ -148,79 +149,151 @@ vela_worker_processing_lag_seconds{service="worker-service"}
 
 ## Distributed Tracing (#301)
 
-End-to-end trace visibility across service boundaries during policy generation and deployment flows is captured using OpenTelemetry-compatible trace spans via `@vellar/service-kit`:
+Every hop of a request carries one trace, from the browser to the build worker.
+Primitives live in `@vellar/service-kit` (`packages/service-kit/src/tracing.ts`).
 
-### Trace Propagation Flow
-1. **API Gateway (`api-gateway`)**: Injects or extracts `x-trace-id`, `x-span-id`, and W3C `traceparent` headers on incoming HTTP requests and proxies them to downstream services.
-2. **Policy Service (`policy-service`)**: Extracts trace context from headers and wraps policy generation and deployment operations in `withTraceSpan("policy-service", "policy.deploy-instance", traceCtx)`. Propagates `traceId` with queued verification and deployment jobs.
-3. **Worker Service (`worker-service`)**: Extracts `traceId` from claimed deployment jobs and executes verification in `withTraceSpan("worker-service", "policy.execute", traceCtx)`.
+### Headers
 
-Trace spans are recorded in `TraceCollector` and exportable to OpenTelemetry APM backends (Jaeger, Zipkin, Datadog).
+| Header        | Format                                     | Purpose                                  |
+| ------------- | ------------------------------------------ | ---------------------------------------- |
+| `traceparent` | W3C: `00-<32 hex trace-id>-<16 hex parent>-01` | read by OpenTelemetry-compatible APMs |
+| `x-trace-id`  | opaque token `[A-Za-z0-9._:-]{1,128}`      | log search key                           |
+| `x-span-id`   | same                                       | caller's span (the downstream parent)    |
+
+Inbound precedence: a valid `traceparent` → `x-trace-id` (+ `x-span-id`) →
+`x-request-id` → a fresh trace. A malformed `traceparent` (bad shape, all-zero
+ids, version `ff`) is ignored; an `x-trace-id` outside the token charset is
+dropped. When `x-trace-id` isn't already 32-hex/UUID, the emitted
+`traceparent` trace-id is its SHA-256 prefix, so every hop derives the same one.
+
+### Propagation path
+
+```
+browser ──traceparent?──▶ api-gateway          span "METHOD /route" (root, or child of browser)
+                            │  rewrites traceparent/x-trace-id/x-span-id → gateway span
+                            ▼
+          wallet | policy | lifecycle | verification | permission-service
+                            │  registerTracing: server span, child of gateway span
+                            │  request.traceContext = this span; request.log has traceId/spanId
+                            │
+      policy-service ───────┼─▶ span "policy.deploy-instance" (sponsor deploy, child of server span)
+                            │
+      verification-service ─┼─▶ record.traceId / record.traceParentSpanId  (jsonb, internal only)
+      wallet /wallet/jobs ──┘   job.traceId / job.traceParentSpanId
+                            ▼
+                     worker-service claims row ─▶ span "verification.execute"
+                                                  (child of the submitting server span)
+```
+
+- `registerTracing(app, service)` opens the server span in `onRequest`, echoes
+  `traceparent` + `x-trace-id` on the response in `onSend` (the gateway exposes
+  both via CORS), and records the span in `onResponse` (status `error` on 5xx,
+  name re-labelled to the route pattern).
+- The gateway registers it **before** its boundary hook, which forwards the
+  gateway span's context upstream, so downstream spans parent onto the gateway.
+- The worker has no HTTP request: the trace crosses the queue as fields on the
+  verification record. `toPublic` strips them; rows written before #301 (or
+  with a malformed value) validate fine and start a fresh trace.
+
+Spans land in `TraceCollector` (bounded to the latest 10 000). Hook an exporter
+with `TraceCollector.getInstance().onSpan(span => …)` to ship them to Jaeger,
+Zipkin, Datadog or an OTLP collector; an exporter that throws never fails the
+request.
+
+### Verifying propagation end to end
+
+1. Send a request with a known trace through the gateway:
+
+   ```sh
+   curl -si -X POST "$GATEWAY/verification/submit" \
+     -H 'content-type: application/json' \
+     -H 'traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01' \
+     -d '{ "contractId": "C…", "sourceType": "repo", "repoUrl": "…", "commitHash": "…" }'
+   ```
+
+   The response carries `x-trace-id: 4bf92f3577b34da6a3ce929d0e0e4736` and a
+   `traceparent` with that same trace-id and the gateway's span as parent.
+2. Search logs for `"traceId":"4bf92f3577b34da6a3ce929d0e0e4736"`: expect lines
+   from `api-gateway` and `verification-service` (request logger bindings),
+   then a worker line `verification <id> → verified (…) [traceId=4bf9…]`.
+3. With an exporter attached, the trace shows
+   `api-gateway` → `verification-service` → `worker-service verification.execute`,
+   each span's `parentSpanId` equal to the previous span's `spanId`.
+4. Repeat without `traceparent`: the gateway mints a trace and step 2 still
+   finds one id across all three services.
 
 ### Structured events
 
 The following events are emitted via `logEvent()` for operational search and
 analytics:
 
-| Event Name | Emitted By | Trigger | Properties |
-|---|---|---|---|
+| Event Name        | Emitted By     | Trigger                                                       | Properties                                                                                                                                   |
+| ----------------- | -------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `policy.deployed` | policy-service | Successful policy template deployment (POST /policies/deploy) | `policyId` (string), `templateType` (string, e.g. "spending_limit"), `walletId` (string, Soroban address), `deployedAt` (ISO 8601 timestamp) |
 
 Example log line (JSON):
+
 ```json
-{"level":"info","time":"2026-08-29T10:30:00.000Z","event":"policy.deployed","policyId":"550e8400-e29b-41d4-a716-446655440000","templateType":"spending_limit","walletId":"CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67","deployedAt":"2026-08-29T10:30:00.000Z"}
+{
+  "level": "info",
+  "time": "2026-08-29T10:30:00.000Z",
+  "event": "policy.deployed",
+  "policyId": "550e8400-e29b-41d4-a716-446655440000",
+  "templateType": "spending_limit",
+  "walletId": "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67",
+  "deployedAt": "2026-08-29T10:30:00.000Z"
+}
 ```
 
 ## Recommended alert rules (§13 Alerting)
 
-Wire these in your monitoring system against the metrics above. Thresholds are
-starting points — tune to real traffic.
+The rules are wired for real in
+[`infra/monitoring/vela-alerts.yml`](../infra/monitoring/vela-alerts.yml)
+(Prometheus rule file, with severity labels, summaries and runbook links) and
+routed by [`infra/monitoring/alertmanager/alertmanager.yml`](../infra/monitoring/alertmanager/alertmanager.yml):
+`critical` → on-call webhook + Slack, everything else → Slack.
 
-```yaml
-# verification worker failures
-- alert: VerificationWorkerFailures
-  expr: increase(vela_rpc_errors_total{service="worker-service",upstream="build"}[10m]) > 3
-  for: 5m
+| Alert                        | Expression (abridged)                                                                 | For | Severity |
+| ---------------------------- | ------------------------------------------------------------------------------------- | --- | -------- |
+| `VelaServiceDown`            | `up{job=~"vela-.*"} == 0`                                                             | 2m  | critical |
+| `VerificationWorkerFailures` | `increase(vela_rpc_errors_total{service="worker-service",upstream="build"}[10m]) > 3` | 5m  | warning  |
+| `RpcDegradation`             | `increase(vela_rpc_errors_total{upstream="relayer"}[5m]) > 5`                          | 5m  | warning  |
+| `TxSubmitFailureSpike`       | failure ratio of `vela_wallet_tx_signed_total` over 5m `> 0.2`                         | 10m | critical |
+| `CleanupFailureRate`         | failure ratio of `vela_lifecycle_cleanup_completed_total` over 15m `> 0.5`             | 15m | warning  |
+| `VerificationSlow`           | p95 of `vela_worker_verification_turnaround_seconds` over 30m `> 300`                  | 15m | warning  |
 
-# RPC / Horizon degradation
-- alert: RpcDegradation
-  expr: increase(vela_rpc_errors_total{upstream="relayer"}[5m]) > 5
-  for: 5m
+Thresholds are starting points — tune to real traffic. Note: an earlier version
+of this section used pre-#300 metric names (`vela_tx_signed_total`,
+`vela_cleanup_completed_total`, `vela_verification_turnaround_seconds`) that
+match no emitted series; the rule file uses the current names.
 
-# tx submission failure spike (idea.md: tx submission spikes/failures)
-- alert: TxSubmitFailureSpike
-  expr: |
-    sum(rate(vela_tx_signed_total{outcome="failure"}[5m]))
-    / clamp_min(sum(rate(vela_tx_signed_total[5m])), 1) > 0.2
-  for: 10m
+## Running the monitoring stack
 
-# abnormal cleanup failure rate
-- alert: CleanupFailureRate
-  expr: |
-    sum(rate(vela_cleanup_completed_total{outcome="failure"}[15m]))
-    / clamp_min(sum(rate(vela_cleanup_completed_total[15m])), 1) > 0.5
-  for: 15m
+[`infra/monitoring/docker-compose.yml`](../infra/monitoring/docker-compose.yml)
+runs Prometheus (scrape + rule evaluation), Alertmanager and Grafana (with the
+`Vellar — Service Overview` dashboard provisioned from
+`infra/monitoring/grafana/dashboards/`):
 
-# verification turnaround too slow (p95 > 5 min)
-- alert: VerificationSlow
-  expr: histogram_quantile(0.95, sum(rate(vela_verification_turnaround_seconds_bucket[30m])) by (le)) > 300
-  for: 15m
+```sh
+# secrets are files, never committed — see infra/monitoring/alertmanager/secrets/README.md
+echo "https://hooks.slack.com/services/..." > infra/monitoring/alertmanager/secrets/slack_webhook_url
+echo "https://events.pagerduty.com/..."     > infra/monitoring/alertmanager/secrets/oncall_webhook_url
+docker compose -f infra/monitoring/docker-compose.yml up -d
+# Prometheus :9090 · Alertmanager :9093 · Grafana :3001
 ```
 
-## Example scrape config
-
-```yaml
-scrape_configs:
-  - job_name: vela
-    metrics_path: /metrics
-    static_configs:
-      - targets: ["gateway:4000", "worker:4005"] # all-in-one: just the gateway
-```
+Scrape targets live in
+[`infra/monitoring/prometheus/prometheus.yml`](../infra/monitoring/prometheus/prometheus.yml)
+and default to the local dev ports via `host.docker.internal`. For a deployed
+environment, point them at the real hosts; for `all-in-one`, keep only the
+gateway and the worker. Hosted Prometheus (Grafana Cloud, etc.) can import
+`vela-alerts.yml` and the dashboard JSON as-is.
 
 ## Honest scope
 
-The instrumentation (endpoints, metrics, structured events) is built and tested.
-Standing up Prometheus/Grafana and activating the alert rules above is
-environment-dependent ops — the free-tier hosting has nowhere to run a scraper,
-so this doc gives you everything needed to wire it wherever the app is deployed
-for real, without pretending a monitoring stack exists.
+The instrumentation (endpoints, metrics, structured events) is built and tested,
+and the scrape/alert/dashboard configuration is committed under
+`infra/monitoring/`. What remains environment-dependent is *where* that stack
+runs: the free-tier hosting has nowhere to run a scraper, so a deployment must
+either run the compose stack alongside the services or load the same rule file
+and dashboard into a hosted Prometheus.

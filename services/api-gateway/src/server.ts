@@ -7,12 +7,14 @@ import {
   CircuitOpenError,
   createCircuitBreaker,
   domainMetrics,
-  extractTraceContext,
   injectTraceContext,
   registerHealth,
   registerMetrics,
+  registerTracing,
 } from "@vellar/service-kit";
-import { registerProxyRoute } from "./register-proxy-route";
+import { registerErrorEnvelope, sendError } from "./error-envelope";
+import { registerVersionedProxyRoute } from "./register-proxy-route";
+import { TokenBucketLimiter } from "./token-bucket";
 
 // Gateway (technical-doc.md §6.3, §8; idea.md §12): the single public entry
 // point, so the cross-cutting security controls live HERE (defense at the
@@ -20,6 +22,7 @@ import { registerProxyRoute } from "./register-proxy-route";
 // service). Controls in this file:
 //   - CORS: only the configured web-app origin(s) may call the API.
 //   - Rate limiting: per-IP request cap to blunt flooding/abuse.
+//   - Tenant rate limiting: token bucket per tenant/session ID (#259).
 //   - Security headers (helmet): HSTS, nosniff, frame-deny, referrer policy.
 //   - Body-size + request timeout caps: cheap abuse protection.
 //   - Content-type enforcement on mutations: the CSRF mitigation appropriate to
@@ -35,8 +38,13 @@ export interface GatewayOptions {
   rateLimitMax?: number;
   /** Rate-limit window in ms. Default 60_000; env RATE_LIMIT_WINDOW_MS. */
   rateLimitWindowMs?: number;
+  /** Token bucket capacity per tenant. Default 60; env TENANT_BUCKET_CAPACITY. */
+  tenantBucketCapacity?: number;
+  /** Token bucket refill rate (tokens/sec) per tenant. Default 10; env TENANT_BUCKET_REFILL_RATE. */
+  tenantBucketRefillRate?: number;
   /** Max request body size in bytes. Default 1 MiB; env MAX_BODY_BYTES. */
   maxBodyBytes?: number;
+
   /** Per-request timeout in ms (connection-level). Default 310_000 — must
    * stay >= the x402 payment gate's maxTimeoutSeconds (300s on
    * /lifecycle/execute and /verification/:contractId) or the gateway kills a
@@ -72,13 +80,23 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
   ];
   const corsOriginRaw = options.corsOrigin ?? process.env.CORS_ORIGIN;
   const corsOrigins = corsOriginRaw
-    ? corsOriginRaw.split(",").map((o) => o.trim()).filter(Boolean)
+    ? corsOriginRaw
+        .split(",")
+        .map((o) => o.trim())
+        .filter(Boolean)
     : DEFAULT_ALLOWED_ORIGINS;
 
   const maxBodyBytes = options.maxBodyBytes ?? numEnv("MAX_BODY_BYTES", 1024 * 1024);
   const requestTimeoutMs = options.requestTimeoutMs ?? numEnv("REQUEST_TIMEOUT_MS", 310_000);
   const rateLimitMax = options.rateLimitMax ?? numEnv("RATE_LIMIT_MAX", 120);
   const rateLimitWindowMs = options.rateLimitWindowMs ?? numEnv("RATE_LIMIT_WINDOW_MS", 60_000);
+  const tenantBucketCapacity = options.tenantBucketCapacity ?? numEnv("TENANT_BUCKET_CAPACITY", 60);
+  const tenantBucketRefillRate = options.tenantBucketRefillRate ?? numEnv("TENANT_BUCKET_REFILL_RATE", 10);
+
+  const tenantLimiter = new TokenBucketLimiter({
+    capacity: tenantBucketCapacity,
+    refillRatePerSecond: tenantBucketRefillRate,
+  });
 
   const app = Fastify({
     logger: options.logger !== undefined ? (options.logger as never) : true,
@@ -88,6 +106,16 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
     // Drop slow/stalled connections rather than letting them hold resources.
     connectionTimeout: requestTimeoutMs,
   });
+
+  // Standardized error envelope (issue #262) for every response this
+  // gateway sends directly (a proxied upstream error is forwarded
+  // unchanged, not touched by this).
+  registerErrorEnvelope(app);
+
+  // Distributed tracing (#301): the gateway's server span is the root every
+  // downstream hop parents onto. Registered before the boundary hook below,
+  // which reads request.traceContext to rewrite the proxied headers.
+  registerTracing(app, "api-gateway");
 
   // Structured request logging middleware (idea.md §13, docs/observability.md):
   // Emits structured JSON containing method, path, status, and duration for every request.
@@ -137,6 +165,8 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
       }
     },
     methods: ["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
+    // Let the web app read which trace served a request (#301).
+    exposedHeaders: ["traceparent", "x-trace-id"],
   });
 
   // Boundary checks that must run BEFORE proxying. @fastify/http-proxy streams
@@ -147,19 +177,31 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
     const method = request.method.toUpperCase();
     const isMutation = method === "POST" || method === "PUT" || method === "PATCH";
 
-    // Distributed tracing context propagation (#301)
-    const traceCtx = extractTraceContext(request.headers as Record<string, string | undefined>);
-    const traceHeaders = injectTraceContext(traceCtx);
-    for (const [key, value] of Object.entries(traceHeaders)) {
-      request.headers[key] = value;
+    // Distributed tracing context propagation (#301): overwrite whatever the
+    // client sent with the gateway span's context, so the upstream service's
+    // server span is a child of the gateway span (same traceId, parent = us).
+    if (request.traceContext) {
+      for (const [key, value] of Object.entries(injectTraceContext(request.traceContext))) {
+        request.headers[key] = value;
+      }
+    }
+
+    // Per-tenant token bucket rate limit (#259)
+    const tenantId = (request.headers["x-tenant-id"] || request.headers["x-session-id"]) as string | undefined;
+    if (tenantId && request.url !== "/health") {
+      const result = tenantLimiter.tryConsume(tenantId);
+      if (!result.allowed) {
+        reply.header("Retry-After", String(result.retryAfterSeconds ?? 1));
+        return sendError(reply, 429, "too_many_requests", "Tenant rate limit exceeded. Please retry later.", {
+          retryAfter: result.retryAfterSeconds,
+        });
+      }
     }
 
     // Body-size cap (413) — reject before the body is streamed upstream.
     const declaredLen = Number(request.headers["content-length"] ?? 0);
     if (Number.isFinite(declaredLen) && declaredLen > maxBodyBytes) {
-      return reply
-        .code(413)
-        .send({ error: "payload_too_large", reason: `body exceeds ${maxBodyBytes} bytes` });
+      return sendError(reply, 413, "payload_too_large", `Body exceeds ${maxBodyBytes} bytes.`);
     }
 
     // CSRF mitigation for a cookieless API (idea.md §12): this gateway uses no
@@ -171,10 +213,12 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
     if (isMutation) {
       const ct = request.headers["content-type"] ?? "";
       if (!ct.toLowerCase().includes("application/json")) {
-        return reply.code(415).send({
-          error: "unsupported_media_type",
-          reason: "Content-Type must be application/json",
-        });
+        return sendError(
+          reply,
+          415,
+          "unsupported_media_type",
+          "Content-Type must be application/json.",
+        );
       }
     }
   });
@@ -182,15 +226,15 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
   registerHealth(app, "api-gateway");
   registerMetrics(app, "api-gateway");
 
-  registerProxyRoute(app, { upstream: walletServiceUrl, prefix: "/wallet" });
+  registerVersionedProxyRoute(app, { upstream: walletServiceUrl, prefix: "/wallet" });
 
   const lifecycleServiceUrl =
     options.lifecycleServiceUrl ?? process.env.LIFECYCLE_SERVICE_URL ?? "http://localhost:4002";
-  registerProxyRoute(app, { upstream: lifecycleServiceUrl, prefix: "/lifecycle" });
+  registerVersionedProxyRoute(app, { upstream: lifecycleServiceUrl, prefix: "/lifecycle" });
 
   const policyServiceUrl =
     options.policyServiceUrl ?? process.env.POLICY_SERVICE_URL ?? "http://localhost:4003";
-  registerProxyRoute(app, { upstream: policyServiceUrl, prefix: "/policies" });
+  registerVersionedProxyRoute(app, { upstream: policyServiceUrl, prefix: "/policies" });
 
   const verificationServiceUrl =
     options.verificationServiceUrl ??
@@ -225,7 +269,7 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
     },
   });
 
-  registerProxyRoute(app, {
+  registerVersionedProxyRoute(app, {
     upstream: verificationServiceUrl,
     prefix: "/verification",
     // Runs before the proxy forwards the request — fast-fails while the
@@ -236,11 +280,13 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
         verificationBreaker.beforeCall();
       } catch (err) {
         if (err instanceof CircuitOpenError) {
-          return reply.code(503).send({
-            error: "verification_service_unavailable",
-            reason: "circuit breaker open — verification-service is failing",
-            retryAfterMs: err.retryAfterMs,
-          });
+          return sendError(
+            reply,
+            503,
+            "verification_service_unavailable",
+            "Circuit breaker open: verification-service is failing.",
+            { retryAfterMs: err.retryAfterMs },
+          );
         }
         throw err;
       }

@@ -1,6 +1,9 @@
 import { inArray, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { verificationRecords, verificationRecordsArchive } from "@vellar/verification-service/db-schema";
+import {
+  verificationRecords,
+  verificationRecordsArchive,
+} from "@vellar/verification-service/db-schema";
 
 // ETL cleanup job for stale verification_records rows (issue #345).
 //
@@ -64,7 +67,10 @@ export async function runCleanup(
     .select({ id: verificationRecords.id })
     .from(verificationRecords)
     .where(
-      sql`${verificationRecords.status} = ANY(ARRAY[${sql.join(TERMINAL_STATUSES.map((s) => sql`${s}`), sql`, `)}])
+      sql`${verificationRecords.status} = ANY(ARRAY[${sql.join(
+        TERMINAL_STATUSES.map((s) => sql`${s}`),
+        sql`, `,
+      )}])
           AND ${verificationRecords.updatedAt} <= ${cutoff}`,
     )
     .limit(config.batchSize);
@@ -102,9 +108,7 @@ export async function runCleanup(
   // Rows that moved out of a terminal state between the SELECT and the DELETE
   // (impossible in production but possible in fast test clocks) are unaffected
   // because we match on id, not on status+updated_at again.
-  await db
-    .delete(verificationRecords)
-    .where(inArray(verificationRecords.id, ids));
+  await db.delete(verificationRecords).where(inArray(verificationRecords.id, ids));
 
   return { archived, deleted: ids.length };
 }

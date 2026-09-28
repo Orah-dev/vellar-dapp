@@ -71,6 +71,30 @@ describe("api-gateway", () => {
     expect(res.json()).toMatchObject({ status: "verified", from: "verification-service-stub" });
   });
 
+  // Issue #258: every proxied route is also reachable under a /v1 prefix,
+  // forwarding to the exact same backend path as the unversioned route.
+  it("proxies /v1/wallet/* to the wallet service, same as the unversioned path", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/wallet/connect",
+      payload: { keyId: "key-1", network: "testnet" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      echoed: { keyId: "key-1", network: "testnet" },
+      from: "wallet-service-stub",
+    });
+  });
+
+  it("proxies /v1/verification/* to the verification service, same as the unversioned path", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/v1/verification/CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67/status",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ status: "verified", from: "verification-service-stub" });
+  });
+
   it("propagates upstream errors instead of masking them", async () => {
     const res = await app.inject({ method: "POST", url: "/wallet/unknown-route", payload: {} });
     expect(res.statusCode).toBe(404);
@@ -163,8 +187,8 @@ describe("api-gateway circuit breaker for verification-service (#326)", () => {
       // the breaker's own 503, not attempt the network call at all.
       const third = await cbApp.inject({ method: "GET", url: "/verification/ping" });
       expect(third.statusCode).toBe(503);
-      expect(third.json()).toMatchObject({ error: "verification_service_unavailable" });
-      expect(third.json().retryAfterMs).toBeGreaterThan(0);
+      expect(third.json()).toMatchObject({ error: { code: "verification_service_unavailable" } });
+      expect(third.json().error.details.retryAfterMs).toBeGreaterThan(0);
 
       // Start the real upstream and wait past the 200ms cooldown — the next
       // call should be allowed through as the half-open trial and succeed,
@@ -216,6 +240,43 @@ describe("api-gateway circuit breaker for verification-service (#326)", () => {
     } finally {
       await cbApp.close();
       await verificationUpstream.close();
+    }
+  });
+
+  // Issue #258: /v1/verification and /verification are two separate proxy
+  // registrations (registerVersionedProxyRoute), each with its own
+  // preHandler/replyOptions closure. Both closures reference the SAME
+  // verificationBreaker instance, so this proves the breaker's open/closed
+  // state is shared across both prefixes rather than each prefix tripping
+  // its own independent breaker against the same real downstream.
+  it("shares circuit breaker state across the /v1 and unversioned verification prefixes", async () => {
+    const probe = Fastify();
+    await probe.listen({ port: 0, host: "127.0.0.1" });
+    const { port } = probe.server.address() as AddressInfo;
+    await probe.close();
+
+    const cbApp = buildServer({
+      walletServiceUrl: "http://127.0.0.1:1",
+      verificationServiceUrl: `http://127.0.0.1:${port}`,
+      verificationCircuitFailureThreshold: 2,
+      verificationCircuitCooldownMs: 60_000,
+    });
+    await cbApp.ready();
+
+    try {
+      // Trip the breaker via the UNVERSIONED prefix.
+      const first = await cbApp.inject({ method: "GET", url: "/verification/ping" });
+      expect(first.statusCode).toBeGreaterThanOrEqual(500);
+      const second = await cbApp.inject({ method: "GET", url: "/verification/ping" });
+      expect(second.statusCode).toBeGreaterThanOrEqual(500);
+
+      // The VERSIONED prefix must already see it open too — a fast-fail 503,
+      // not a fresh attempt against the (still down) real upstream.
+      const versioned = await cbApp.inject({ method: "GET", url: "/v1/verification/ping" });
+      expect(versioned.statusCode).toBe(503);
+      expect(versioned.json()).toMatchObject({ error: { code: "verification_service_unavailable" } });
+    } finally {
+      await cbApp.close();
     }
   });
 });
@@ -277,7 +338,7 @@ describe("api-gateway security controls", () => {
       payload: "keyId=k",
     });
     expect(res.statusCode).toBe(415);
-    expect(res.json().error).toBe("unsupported_media_type");
+    expect(res.json().error.code).toBe("unsupported_media_type");
   });
 
   it("rejects an over-limit request body (413)", async () => {
@@ -293,8 +354,103 @@ describe("api-gateway security controls", () => {
       const big = { blob: "x".repeat(1000) }; // > 256-byte maxBodyBytes
       const res = await bodyApp.inject({ method: "POST", url: "/wallet/connect", payload: big });
       expect(res.statusCode).toBe(413);
+      expect(res.json()).toEqual({
+        error: { code: "payload_too_large", message: "Body exceeds 256 bytes." },
+      });
     } finally {
       await bodyApp.close();
+    }
+  });
+});
+
+describe("api-gateway error envelope (#262)", () => {
+  it("every hand-written error response shares the same { error: { code, message } } shape", async () => {
+    const upstream = Fastify();
+    upstream.post("/wallet/connect", async (request) => ({ echoed: request.body }));
+    await upstream.listen({ port: 0, host: "127.0.0.1" });
+    const { port } = upstream.server.address() as AddressInfo;
+
+    const app = buildServer({
+      walletServiceUrl: `http://127.0.0.1:${port}`,
+      rateLimitMax: 1,
+      rateLimitWindowMs: 60_000,
+      maxBodyBytes: 32,
+    });
+    await app.ready();
+
+    try {
+      // 415: unsupported content-type on a mutation.
+      const contentType = await app.inject({
+        method: "POST",
+        url: "/wallet/connect",
+        headers: { "content-type": "text/plain" },
+        payload: "x",
+      });
+      expect(contentType.json()).toEqual({
+        error: { code: "unsupported_media_type", message: "Content-Type must be application/json." },
+      });
+
+      // 413: over the body-size cap.
+      const oversized = await app.inject({
+        method: "POST",
+        url: "/wallet/connect",
+        payload: { blob: "x".repeat(64) },
+      });
+      expect(oversized.json()).toEqual({
+        error: { code: "payload_too_large", message: "Body exceeds 32 bytes." },
+      });
+
+      // 404: outside every proxied prefix — the global setNotFoundHandler.
+      const notFound = await app.inject({ method: "GET", url: "/nope" });
+      expect(notFound.statusCode).toBe(404);
+      expect(notFound.json()).toEqual({
+        error: { code: "not_found", message: "No route matches GET /nope" },
+      });
+
+      // Every response above shares the exact same top-level shape: an
+      // "error" object with (at least) string "code" and "message" fields,
+      // never a bare string, never a "reason" field, never inlined at the
+      // top level.
+      for (const res of [contentType, oversized, notFound]) {
+        const body = res.json();
+        expect(body).toHaveProperty("error");
+        expect(typeof body.error.code).toBe("string");
+        expect(typeof body.error.message).toBe("string");
+      }
+    } finally {
+      await app.close();
+      await upstream.close();
+    }
+  });
+
+  it("429 (tenant token-bucket) envelope includes details.retryAfter", async () => {
+    const upstream = Fastify();
+    upstream.post("/wallet/connect", async () => ({ ok: true }));
+    await upstream.listen({ port: 0, host: "127.0.0.1" });
+    const { port } = upstream.server.address() as AddressInfo;
+
+    const app = buildServer({
+      walletServiceUrl: `http://127.0.0.1:${port}`,
+      rateLimitMax: 1000, // so only the TENANT bucket below can trip
+      tenantBucketCapacity: 1,
+      tenantBucketRefillRate: 0.001,
+    });
+    await app.ready();
+
+    try {
+      const headers = { "x-tenant-id": "tenant-1", "content-type": "application/json" };
+      const first = await app.inject({ method: "POST", url: "/wallet/connect", headers, payload: {} });
+      expect(first.statusCode).toBe(200);
+
+      const second = await app.inject({ method: "POST", url: "/wallet/connect", headers, payload: {} });
+      expect(second.statusCode).toBe(429);
+      expect(second.json()).toMatchObject({
+        error: { code: "too_many_requests" },
+      });
+      expect(second.json().error.details.retryAfter).toBeGreaterThan(0);
+    } finally {
+      await app.close();
+      await upstream.close();
     }
   });
 });
@@ -344,4 +500,3 @@ describe("api-gateway structured request logging", () => {
     }
   });
 });
-

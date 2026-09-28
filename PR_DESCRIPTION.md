@@ -9,27 +9,32 @@ This PR consolidates four significant features across policy service, verificati
 ## Features Merged
 
 ### 1. Policy Service Controller Refactoring (#350)
+
 **Branch:** `refactor/policy-service-split-controller`
 
 Splits monolithic controller into focused modules:
+
 - **validation.ts** — Policy definition and deployability validation (30+ tests)
 - **deployment.ts** — Orchestration logic for instance deployment (20+ tests)
 - **server.ts** — Thin HTTP coordinator (30+ integration tests)
 
 ✅ All existing endpoints preserved  
 ✅ No breaking changes  
-✅ 50+ tests verify behavior  
+✅ 50+ tests verify behavior
 
 ### 2. Verification Service Metadata Backfill (#344)
+
 **Branch:** `chore/backfill-verification-requests-metadata`
 
 Safe, idempotent backfill for missing `deployedHash` metadata:
+
 - Fetches on-chain wasm hash from Stellar RPC
 - Batch processing (10 records/batch) with rate-limiting and retry logic
 - Dry-run mode (default) with `--confirm` flag to prevent accidents
 - Comprehensive error handling and logging
 
 **Usage:**
+
 ```bash
 # Dry-run (default)
 tsx services/verification-service/scripts/backfill-metadata.ts
@@ -40,30 +45,35 @@ tsx services/verification-service/scripts/backfill-metadata.ts --confirm
 
 ✅ 7 test cases covering all scenarios  
 ✅ Idempotent and safe to re-run  
-✅ Detailed verification documentation  
+✅ Detailed verification documentation
 
 ### 3. Lifecycle Service PII Redaction (#342)
+
 **Branch:** `feat/audit-log-pii-redaction`
 
 Centralized PII redaction for all audit logs:
+
 - Automatically redacts account IDs, balances, and sensitive fields
 - Deterministic hashing enables correlation while hiding identity
 - Applied at persistence layer (prevents unredacted data leakage)
 - All 4 endpoints emit audit events with automatic redaction
 
 **Redaction Rules:**
+
 - Account IDs → SHA256 hash (12 chars)
 - Balance/asset info → Dropped
 - Operational fields (tx hashes, step titles) → Preserved
 
 ✅ 65+ tests verify no PII leakage  
 ✅ Complete field inventory documented  
-✅ All error paths emit audit events  
+✅ All error paths emit audit events
 
 ### 4. Wallet Creation Funnel Analytics (#351)
+
 **Branch:** `feat/wallet-creation-funnel-analytics`
 
 Client-side analytics tracking for onboarding:
+
 - Defines wallet creation funnel event schema
 - Events: `wallet.funnel.start`, `wallet.creation.initiated`, `wallet.creation.cancelled`, etc.
 - Hashed session IDs for privacy (no raw identifiers)
@@ -71,7 +81,7 @@ Client-side analytics tracking for onboarding:
 
 ✅ Comprehensive event documentation  
 ✅ Privacy by design (no sensitive data)  
-✅ Integration with analytics tracking system  
+✅ Integration with analytics tracking system
 
 ## Testing
 
@@ -138,6 +148,7 @@ apps/docs/
 ## Merge Strategy
 
 This PR combines four feature branches into `combined/all-features`:
+
 1. `refactor/policy-service-split-controller` ✅
 2. `chore/backfill-verification-requests-metadata` ✅
 3. `feat/audit-log-pii-redaction` ✅

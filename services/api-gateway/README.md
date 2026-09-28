@@ -13,11 +13,11 @@ The gateway is a single Fastify server. Every incoming request passes through a 
 
 Global plugins applied to all routes:
 
-| Plugin | Purpose |
-|---|---|
-| `@fastify/helmet` | Security headers (HSTS, X-Frame-Options, nosniff, …) |
-| `@fastify/cors` | Restricts browser callers to the configured origin(s) |
-| `@fastify/rate-limit` | Per-IP request cap; `/health` is exempt |
+| Plugin                | Purpose                                               |
+| --------------------- | ----------------------------------------------------- |
+| `@fastify/helmet`     | Security headers (HSTS, X-Frame-Options, nosniff, …)  |
+| `@fastify/cors`       | Restricts browser callers to the configured origin(s) |
+| `@fastify/rate-limit` | Per-IP request cap; `/health` is exempt               |
 
 ---
 
@@ -30,18 +30,18 @@ import { registerProxyRoute } from "./register-proxy-route";
 
 registerProxyRoute(app, {
   upstream: walletServiceUrl, // e.g. "http://localhost:4001"
-  prefix: "/wallet",          // path the gateway exposes
+  prefix: "/wallet", // path the gateway exposes
   // rewritePrefix defaults to prefix — omit when they are the same
 });
 ```
 
 ### Options
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `upstream` | `string` | yes | Base URL of the backend service |
-| `prefix` | `string` | yes | Path prefix exposed by the gateway |
-| `rewritePrefix` | `string` | no | Path forwarded to the upstream (defaults to `prefix`) |
+| Field           | Type     | Required | Description                                           |
+| --------------- | -------- | -------- | ----------------------------------------------------- |
+| `upstream`      | `string` | yes      | Base URL of the backend service                       |
+| `prefix`        | `string` | yes      | Path prefix exposed by the gateway                    |
+| `rewritePrefix` | `string` | no       | Path forwarded to the upstream (defaults to `prefix`) |
 
 When the gateway prefix and the upstream path differ — for example a future versioned route (`/v2/wallet` → `/wallet`) — pass `rewritePrefix` explicitly:
 
@@ -55,11 +55,11 @@ registerProxyRoute(app, {
 
 ### Current routes
 
-| Gateway prefix | Upstream env var | Default upstream URL |
-|---|---|---|
-| `/wallet` | `WALLET_SERVICE_URL` | `http://localhost:4001` |
-| `/lifecycle` | `LIFECYCLE_SERVICE_URL` | `http://localhost:4002` |
-| `/policies` | `POLICY_SERVICE_URL` | `http://localhost:4003` |
+| Gateway prefix  | Upstream env var           | Default upstream URL    |
+| --------------- | -------------------------- | ----------------------- |
+| `/wallet`       | `WALLET_SERVICE_URL`       | `http://localhost:4001` |
+| `/lifecycle`    | `LIFECYCLE_SERVICE_URL`    | `http://localhost:4002` |
+| `/policies`     | `POLICY_SERVICE_URL`       | `http://localhost:4003` |
 | `/verification` | `VERIFICATION_SERVICE_URL` | `http://localhost:4004` |
 
 ---
@@ -68,15 +68,15 @@ registerProxyRoute(app, {
 
 All values can be set via environment variables or passed directly to `buildServer(options)` (useful in tests):
 
-| Env var | Default | Description |
-|---|---|---|
-| `CORS_ORIGIN` | `http://localhost:3000` | Allowed browser origin(s), comma-separated |
-| `RATE_LIMIT_MAX` | `120` | Max requests per IP per window |
-| `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window in ms |
-| `MAX_BODY_BYTES` | `1048576` (1 MiB) | Maximum request body size |
-| `REQUEST_TIMEOUT_MS` | `30000` | Connection-level timeout |
-| `PORT` | `4000` | Port the gateway listens on |
-Unified API entrypoint: auth/session middleware, rate limiting, request tracing, client routing.
+| Env var                                                                                          | Default                 | Description                                |
+| ------------------------------------------------------------------------------------------------ | ----------------------- | ------------------------------------------ |
+| `CORS_ORIGIN`                                                                                    | `http://localhost:3000` | Allowed browser origin(s), comma-separated |
+| `RATE_LIMIT_MAX`                                                                                 | `120`                   | Max requests per IP per window             |
+| `RATE_LIMIT_WINDOW_MS`                                                                           | `60000`                 | Rate-limit window in ms                    |
+| `MAX_BODY_BYTES`                                                                                 | `1048576` (1 MiB)       | Maximum request body size                  |
+| `REQUEST_TIMEOUT_MS`                                                                             | `30000`                 | Connection-level timeout                   |
+| `PORT`                                                                                           | `4000`                  | Port the gateway listens on                |
+| Unified API entrypoint: auth/session middleware, rate limiting, request tracing, client routing. |
 
 ## CORS Security Policy & Review Cadence
 
@@ -86,7 +86,7 @@ The API Gateway enforces strict origin verification at the boundary:
 - **Dynamic Configuration**: Overridden via comma-separated `CORS_ORIGIN` environment variable.
 - **Review Cadence**: CORS origin configurations must be audited quarterly or whenever new client domains or browser extension IDs are onboarded.
 - **Disallowed Origins**: Any unlisted origin fails preflight checks and will not receive an `Access-Control-Allow-Origin` header.
-Unified API entrypoint: auth/session middleware, rate limiting, request tracing, client routing
+  Unified API entrypoint: auth/session middleware, rate limiting, request tracing, client routing
 
 ## Circuit breaker for verification-service (#326)
 
@@ -95,10 +95,10 @@ circuit breaker (`@vellar/service-kit`'s `createCircuitBreaker`) so a
 downstream outage fails fast instead of cascading into slow gateway
 responses:
 
-| Env var | Default | Meaning |
-|---|---|---|
-| `VERIFICATION_CB_FAILURE_THRESHOLD` | `5` | Consecutive connection-level failures (timeouts, refused connections — NOT a normal 4xx/5xx from a reachable upstream) before the breaker opens. |
-| `VERIFICATION_CB_COOLDOWN_MS` | `30000` | How long the breaker stays open before allowing one half-open trial call through. |
+| Env var                             | Default | Meaning                                                                                                                                          |
+| ----------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `VERIFICATION_CB_FAILURE_THRESHOLD` | `5`     | Consecutive connection-level failures (timeouts, refused connections — NOT a normal 4xx/5xx from a reachable upstream) before the breaker opens. |
+| `VERIFICATION_CB_COOLDOWN_MS`       | `30000` | How long the breaker stays open before allowing one half-open trial call through.                                                                |
 
 While open, requests to `/verification/*` respond `503` immediately with
 `{"error": "verification_service_unavailable", "retryAfterMs": <n>}` —

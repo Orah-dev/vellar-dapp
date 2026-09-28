@@ -6,6 +6,7 @@ import {
   domainMetrics,
   recordOutcome,
   publicBaseUrlFromEnv,
+  registerTracing,
 } from "@vellar/service-kit";
 import { buildCleanupSteps, buildMergeStep } from "./builder";
 import type { AccountReader } from "./horizon";
@@ -15,7 +16,6 @@ import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { HTTPFacilitatorClient, type FacilitatorClient } from "@x402/core/server";
 import type { SupportedResponse } from "@x402/core/types";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
-
 
 // Lifecycle API (idea.md §11): inspect + plan. Execute/merge land with the
 // signing-flow decision (see BUILD-PLAN — docs are ambiguous on who signs
@@ -29,6 +29,12 @@ const planBodySchema = z.object({
   accountId: z.string().min(1),
   destination: z.string().min(1),
 });
+
+import type { CachedAccountReader } from "./account-cache";
+
+function isCachedAccountReader(reader: AccountReader): reader is CachedAccountReader {
+  return typeof (reader as Partial<CachedAccountReader>).invalidate === "function";
+}
 
 export interface LifecycleServiceDeps {
   reader: AccountReader;
@@ -45,7 +51,12 @@ export interface LifecycleServiceDeps {
 function capturedSupportedResponse(): SupportedResponse {
   return {
     kinds: [
-      { x402Version: 2, scheme: "exact", network: "stellar:pubnet", extra: { areFeesSponsored: true } },
+      {
+        x402Version: 2,
+        scheme: "exact",
+        network: "stellar:pubnet",
+        extra: { areFeesSponsored: true },
+      },
       {
         x402Version: 2,
         scheme: "upto",
@@ -82,10 +93,14 @@ export function fakeFacilitatorClient(): FacilitatorClient {
       return capturedSupportedResponse();
     },
     async verify() {
-      throw new Error("fakeFacilitatorClient: verify() is not supported — inject a real client to test payment.");
+      throw new Error(
+        "fakeFacilitatorClient: verify() is not supported — inject a real client to test payment.",
+      );
     },
     async settle() {
-      throw new Error("fakeFacilitatorClient: settle() is not supported — inject a real client to test payment.");
+      throw new Error(
+        "fakeFacilitatorClient: settle() is not supported — inject a real client to test payment.",
+      );
     },
   };
 }
@@ -101,6 +116,7 @@ function validatePair(accountId: string, destination: string): string | undefine
 
 export function buildServer(deps: LifecycleServiceDeps): FastifyInstance {
   const app = Fastify({ logger: true });
+  registerTracing(app, "lifecycle-service");
   registerHealth(app, "lifecycle-service");
   registerMetrics(app, "lifecycle-service");
 
@@ -276,8 +292,13 @@ export function buildServer(deps: LifecycleServiceDeps): FastifyInstance {
       recordOutcome(domainMetrics.cleanupCompleted, "lifecycle-service", "failure");
       return reply.code(409).send({ error: "not_merge_ready", plan });
     }
+    const step = buildMergeStep(account, destination, passphrase);
+    if (isCachedAccountReader(deps.reader)) {
+      deps.reader.invalidate(accountId);
+      deps.reader.invalidate(destination);
+    }
     recordOutcome(domainMetrics.cleanupCompleted, "lifecycle-service", "success");
-    return reply.send({ step: buildMergeStep(account, destination, passphrase) });
+    return reply.send({ step });
   });
 
   return app;

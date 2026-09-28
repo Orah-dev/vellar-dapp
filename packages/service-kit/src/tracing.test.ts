@@ -1,10 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import {
-  extractTraceContext,
-  injectTraceContext,
-  withTraceSpan,
-  TraceCollector,
-} from "./tracing";
+import { extractTraceContext, injectTraceContext, withTraceSpan, TraceCollector } from "./tracing";
 
 describe("distributed tracing module (#301)", () => {
   beforeEach(() => {
@@ -22,7 +17,7 @@ describe("distributed tracing module (#301)", () => {
 
     const injected = injectTraceContext(context);
     expect(injected["x-trace-id"]).toBe("trace-12345");
-    expect(injected.traceparent).toContain("trace12345");
+    expect(injected.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
   });
 
   it("extracts trace context from W3C traceparent header", () => {
@@ -76,7 +71,7 @@ describe("distributed tracing module (#301)", () => {
 
     const spans = TraceCollector.getInstance().getSpans(traceCtx.traceId);
     expect(spans.length).toBe(1);
-    expect(spans[0].status).toBe("error");
-    expect(spans[0].attributes.error).toBe("Deployment verification failed");
+    expect(spans[0]!.status).toBe("error");
+    expect(spans[0]!.attributes.error).toBe("Deployment verification failed");
   });
 });

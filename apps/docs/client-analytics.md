@@ -25,11 +25,11 @@ Every event includes this auto-attached context:
 
 ```typescript
 interface EventContext {
-  sessionId?: string;        // Hashed wallet session ID (for correlation)
-  contractId?: string;       // Smart account contract address (public)
-  network?: Network;         // Network identifier (testnet/mainnet/etc)
-  timestamp: string;         // ISO 8601 timestamp
-  pageSessionId: string;     // Unique browser session token (persists across reloads)
+  sessionId?: string; // Hashed wallet session ID (for correlation)
+  contractId?: string; // Smart account contract address (public)
+  network?: Network; // Network identifier (testnet/mainnet/etc)
+  timestamp: string; // ISO 8601 timestamp
+  pageSessionId: string; // Unique browser session token (persists across reloads)
 }
 ```
 
@@ -50,6 +50,7 @@ Fired when user arrives at the onboarding entry point (`/app`).
 **Context**: `network`
 
 **Example**:
+
 ```json
 {
   "name": "wallet.funnel.start",
@@ -68,11 +69,13 @@ Fired when user clicks "Create wallet" button and passkey prompt is about to ope
 
 **When**: User clicks "Create wallet" button
 **Properties**:
+
 - `hasUsername` (boolean): whether user provided an optional wallet name
 
 **Context**: `network`
 
 **Example**:
+
 ```json
 {
   "name": "wallet.creation.initiated",
@@ -90,6 +93,7 @@ Fired when user dismisses the passkey prompt before confirming (not an error).
 **Context**: `network`
 
 **Example**:
+
 ```json
 {
   "name": "wallet.creation.cancelled",
@@ -107,6 +111,7 @@ Fired when passkey prompt completes successfully (user confirmed passkey creatio
 **Context**: `network`
 
 **Example**:
+
 ```json
 {
   "name": "wallet.creation.passkey_confirmed",
@@ -121,15 +126,18 @@ Fired when backend successfully creates the wallet and session is established.
 
 **When**: Backend returns a valid session; wallet is now usable
 **Properties**:
+
 - `network` (string): network identifier
 - `hasUsername` (boolean): whether wallet was created with a user-provided name
 
 **Context**:
+
 - `network` (should match properties.network for redundancy)
 - `contractId` (string): smart account contract address
 - `sessionId` (string): **hashed** wallet session ID (for correlation across events)
 
 **Example**:
+
 ```json
 {
   "name": "wallet.created",
@@ -150,12 +158,14 @@ Fired when wallet creation encounters an error.
 
 **When**: Passkey creation fails or backend provisioning fails
 **Properties**:
+
 - `failureReason` (string): user-safe error message (must **not** contain seed phrases, keys, or passwords)
 - `step` (string): `"passkey"` or `"backend"` — which step failed
 
 **Context**: `network`
 
 **Example**:
+
 ```json
 {
   "name": "wallet.creation.failed",
@@ -174,11 +184,13 @@ Fired when user successfully reaches the dashboard after wallet creation.
 **When**: Dashboard mounts with active wallet session
 **Properties**: None
 **Context**:
+
 - `network`
 - `contractId`
 - `sessionId` (hashed)
 
 **Example**:
+
 ```json
 {
   "name": "wallet.funnel.completed",
@@ -197,6 +209,7 @@ Fired when user leaves the onboarding flow before completion (e.g., navigates aw
 
 **When**: Page unload or navigation away before `wallet.funnel.completed`
 **Properties**:
+
 - `step` (string): which step the user abandoned at (e.g., `"onboarding"`, `"passkey_prompt"`)
 
 **Context**: `network`
@@ -230,6 +243,7 @@ Fired when backend successfully authenticates the passkey and session is restore
 **When**: Backend validates passkey and returns session
 **Properties**: `{ network: string }`
 **Context**:
+
 - `network`
 - `contractId` (public account address)
 - `sessionId` (hashed)
@@ -240,6 +254,7 @@ Fired when sign-in encounters an error.
 
 **When**: Passkey fails or backend rejects the passkey
 **Properties**:
+
 - `failureReason` (string): user-safe error message
 
 **Context**: `network`
@@ -267,6 +282,7 @@ A complete wallet creation funnel looks like this:
 ```
 
 **Drop-off points**:
+
 - Between start and initiated: user leaves before clicking button
 - Between initiated and passkey_confirmed: user cancels passkey dialog
   - Emits `wallet.creation.cancelled` instead
@@ -277,6 +293,7 @@ A complete wallet creation funnel looks like this:
 ## Privacy Constraints
 
 **Never include in events**:
+
 - Raw session IDs or bearer tokens (must be hashed)
 - Seed phrases or mnemonic words
 - Private keys or key material
@@ -284,6 +301,7 @@ A complete wallet creation funnel looks like this:
 - Personally identifiable information (names, email addresses, IP addresses)
 
 **OK to include**:
+
 - `contractId`: public smart account address (non-sensitive)
 - `network`: public identifier (testnet/mainnet)
 - `hasUsername`: boolean flag (non-sensitive)
@@ -297,13 +315,13 @@ Session IDs must be hashed by the caller using `tracker.hashValue(sessionId)` be
 // ✗ DO NOT DO THIS
 walletCreationEvents.walletCreated(
   { network: "testnet", hasUsername: false },
-  { sessionId: rawSessionId } // Raw session ID exposed!
+  { sessionId: rawSessionId }, // Raw session ID exposed!
 );
 
 // ✓ DO THIS
 walletCreationEvents.walletCreated(
   { network: "testnet", hasUsername: false },
-  { sessionId: tracker.hashValue(rawSessionId) } // Hashed safely
+  { sessionId: tracker.hashValue(rawSessionId) }, // Hashed safely
 );
 ```
 
@@ -326,6 +344,7 @@ Analytics events are tested in `apps/web/lib/analytics.test.ts`:
 - Queue management
 
 Run tests with:
+
 ```bash
 npm run test
 ```
@@ -338,10 +357,7 @@ npm run test
 import { getAnalyticsTracker, walletCreationEvents } from "@/lib/analytics";
 
 // Emit wallet creation initiated
-walletCreationEvents.createInitiated(
-  { hasUsername: !!username },
-  { network: config.network }
-);
+walletCreationEvents.createInitiated({ hasUsername: !!username }, { network: config.network });
 
 // Hash sensitive values before passing
 const sessionHash = getAnalyticsTracker().hashValue(session.sessionId);
@@ -351,7 +367,7 @@ walletCreationEvents.walletCreated(
     network: config.network,
     contractId: session.contractId,
     sessionId: sessionHash,
-  }
+  },
 );
 
 // Flush before critical operations (navigation, page unload)
@@ -382,7 +398,7 @@ When a backend analytics service is ready, update the `flush()` method in `apps/
 async function flush() {
   if (eventQueue.length === 0) return;
   const events = eventQueue.splice(0);
-  
+
   try {
     // Send to backend
     await fetch("/api/analytics", {
@@ -398,6 +414,7 @@ async function flush() {
 ```
 
 Ensure the backend:
+
 - Validates event structure
 - Handles deduplication (same pageSessionId + timestamp = duplicate)
 - Respects privacy constraints (rejects events with suspicious payloads)

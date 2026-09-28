@@ -86,6 +86,14 @@ export const importedRecordSchema = z
     log: z.string().optional(),
     statusDetail: z.string().optional(),
 
+    // ── Trace context (#301) — absent on rows written before it existed ─────
+    traceId: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/).optional().catch(undefined),
+    traceParentSpanId: z
+      .string()
+      .regex(/^[A-Za-z0-9._:-]{1,128}$/)
+      .optional()
+      .catch(undefined),
+
     // ── Status ────────────────────────────────────────────────────────────────
     status: verificationStatusSchema,
 
@@ -189,5 +197,7 @@ export function toClaimedJob(record: ImportedRecord, submittedAtMs?: number): Cl
     toolchainVersion: record.toolchainVersion,
     buildFlags: record.buildFlags,
     submittedAtMs,
+    traceId: record.traceId,
+    traceParentSpanId: record.traceParentSpanId,
   };
 }

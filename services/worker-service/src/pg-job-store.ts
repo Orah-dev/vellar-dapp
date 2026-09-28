@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { verificationRecords } from "@vellar/verification-service/db-schema";
 import type { VerificationRecordInternal } from "@vellar/verification-service/server";
+import { attestedHash } from "./artifact";
 import { calculateBackoffDelay } from "./backoff";
 import type { ClaimedJob, ReapResult, VerificationJobStore } from "./job-store";
 import { validateImportedRecord, toClaimedJob } from "./import-validation";
@@ -22,9 +23,12 @@ export interface PgJobStoreOptions {
   };
 }
 
-export function createPgJobStore(db: NodePgDatabase, options: PgJobStoreOptions = {}): VerificationJobStore {
+export function createPgJobStore(
+  db: NodePgDatabase,
+  options: PgJobStoreOptions = {},
+): VerificationJobStore {
   const log = options.log ?? {
-    warn:  (msg: string)            => console.warn(`[worker-service] ${msg}`),
+    warn: (msg: string) => console.warn(`[worker-service] ${msg}`),
     error: (msg: string, err?: unknown) => console.error(`[worker-service] ${msg}`, err ?? ""),
   };
   return {
@@ -97,6 +101,7 @@ export function createPgJobStore(db: NodePgDatabase, options: PgJobStoreOptions 
         status: result.status,
         outputHash: result.outputHash,
         deployedHash: result.deployedHash,
+        matchMode: result.matchMode,
         // Private full log (operators) + public sanitized statusDetail (H3/FIX 6).
         log: result.log,
         statusDetail: result.statusDetail,
@@ -108,10 +113,18 @@ export function createPgJobStore(db: NodePgDatabase, options: PgJobStoreOptions 
         .where(eq(verificationRecords.id, recordId));
     },
 
-    async reapStranded({ timeoutMs, maxAttempts, baseBackoffDelayMs = 1_000, maxBackoffDelayMs = 30_000, nowMs, onReclaimed, onDeadLettered }) {
+    async reapStranded({
+      timeoutMs,
+      maxAttempts,
+      baseBackoffDelayMs = 1_000,
+      maxBackoffDelayMs = 30_000,
+      nowMs,
+      onReclaimed,
+      onDeadLettered,
+    }) {
       const now = nowMs ?? Date.now();
       const cutoff = new Date(now - timeoutMs);
-      
+
       // Fetch all stranded 'building' rows to apply backoff logic in application layer.
       // SQL alone cannot calculate variable delays per reclaim attempt, so we fetch
       // the rows and apply backoff callbacks here before updating (M7 exponential backoff).
@@ -120,16 +133,19 @@ export function createPgJobStore(db: NodePgDatabase, options: PgJobStoreOptions 
         FROM ${verificationRecords}
         WHERE status = 'building' AND updated_at < ${cutoff}
       `);
-      
+
       const list = ((rows as unknown as { rows?: { id: string; attempts: number }[] }).rows ??
-        (rows as unknown as { id: string; attempts: number }[])) as { id: string; attempts: number }[];
-      
+        (rows as unknown as { id: string; attempts: number }[])) as {
+        id: string;
+        attempts: number;
+      }[];
+
       let reclaimed = 0;
       let deadLettered = 0;
-      
+
       for (const row of list) {
         const attempts = row.attempts ?? 0;
-        
+
         if (attempts >= maxAttempts) {
           // Job exhausted all attempts — dead-letter it
           await db
@@ -137,7 +153,7 @@ export function createPgJobStore(db: NodePgDatabase, options: PgJobStoreOptions 
             .set({
               status: "dead_letter",
               updatedAt: new Date(now),
-              record: sql`jsonb_set(${verificationRecords.record}, '{status}', to_jsonb('dead_letter'))`,
+              record: sql`jsonb_set(${verificationRecords.record}, '{status}', to_jsonb('dead_letter'::text))`,
             })
             .where(eq(verificationRecords.id, row.id));
           deadLettered++;
@@ -147,22 +163,26 @@ export function createPgJobStore(db: NodePgDatabase, options: PgJobStoreOptions 
           // The delay represents how long this job SHOULD wait before being claimed again.
           // In a future enhancement, this could update a "claimAfter" timestamp in the record.
           // For now, we reclaim to 'submitted' and the natural poll interval provides spacing.
-          const backoffDelay = calculateBackoffDelay(attempts, baseBackoffDelayMs, maxBackoffDelayMs);
+          const backoffDelay = calculateBackoffDelay(
+            attempts,
+            baseBackoffDelayMs,
+            maxBackoffDelayMs,
+          );
           onReclaimed?.(attempts);
-          
+
           // Return to submitted for reclaim (backoff delay is advisory/metric only in this version)
           await db
             .update(verificationRecords)
             .set({
               status: "submitted",
               updatedAt: new Date(now),
-              record: sql`jsonb_set(${verificationRecords.record}, '{status}', to_jsonb('submitted'))`,
+              record: sql`jsonb_set(${verificationRecords.record}, '{status}', to_jsonb('submitted'::text))`,
             })
             .where(eq(verificationRecords.id, row.id));
           reclaimed++;
         }
       }
-      
+
       return { reclaimed, deadLettered } satisfies ReapResult;
     },
 
@@ -205,8 +225,9 @@ export function createPgJobStore(db: NodePgDatabase, options: PgJobStoreOptions 
       const result: Array<{ contractId: string; outputHash: string }> = [];
       for (const row of rows.rows as Array<{ contract_id: string; record: unknown }>) {
         const record = row.record as VerificationRecordInternal;
-        if (record.outputHash) {
-          result.push({ contractId: row.contract_id, outputHash: record.outputHash });
+        const hash = attestedHash(record);
+        if (hash) {
+          result.push({ contractId: row.contract_id, outputHash: hash });
         }
       }
       return result;

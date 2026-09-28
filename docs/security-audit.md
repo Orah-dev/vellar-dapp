@@ -120,6 +120,16 @@ ambient host git/SSH credentials.
 > clone inside a network namespace that can only reach public routes — that removes reliance on
 > the git/libcurl pin entirely and also covers any non-HTTP fetch path. Not required now; the
 > pin + redirect-block fully closes the HTTPS clone path this executor uses.
+>
+> **#420 (hermetic builds) keeps this guard as the only way out.** Dependencies are pre-fetched on
+> the host from `Cargo.lock` before the `--network=none` build (`cargo-prefetch.ts`): crates.io
+> packages from two fixed hosts, each pinned to a guard-validated IP and checked against the
+> lockfile sha256; git dependencies through the same guard, pin, redirect block and https-only
+> protocol list as the repo clone; every other source is refused. The pre-fetch runs no submitted
+> code. Regression tests: `cargo-prefetch.test.ts` (metadata/loopback/RFC1918/mixed-answer git
+> deps, ssh/http/credentials URLs — all rejected before any git command) and
+> `hermetic-build.integration.test.ts` (real Docker: an outbound probe from `build.rs` is
+> blocked). See `docs/design-hermetic-verification-builds.md`.
 
 ### H3 — Blind SSRF upgraded to a read primitive via the public build log `[my code]`
 
@@ -133,6 +143,10 @@ read oracle. Same build-box gating as H2.
 
 - **Fix:** keep a private detailed log; return only a sanitized public status string. Retain
   even after H2 is fixed (defense in depth).
+
+> **#420:** pre-fetch failures (`dependencies_unresolved`, `dependency_fetch_failed`) keep this
+> boundary: the public `statusDetail` is the code plus fixed hint text only; hosts, IPs, URLs and
+> git output stay in the private log (`verify.test.ts` "offline dependency failures").
 
 ---
 
@@ -267,29 +281,13 @@ read oracle. Same build-box gating as H2.
   **refuted** (`close-prs-*.yml` only _close_ PRs — no checkout, no merge). **Fix:**
   `autoDeploy: false`, required status checks on main, `pnpm audit` gate.
 
-  > **Status (FIX 11): PARTIALLY CLOSED — repo-side done, two settings remain manual.**
-  > Done in-repo on this branch:
+  > **Status (FIX 11 & #426): CLOSED — closed-by-config & posture decision.**
   >
-  > - **`pnpm audit --audit-level=high` added to CI** (`.github/workflows/ci.yml`, after Install):
-  >   a newly-introduced high/critical advisory now blocks the build. Currently green (FIX 8 took
-  >   the count to 0 high).
-  > - **`autoDeploy: false` on the Render service** (`render.yaml`): Render no longer ships every
-  >   push to `main`; deploy is a manual/tagged action after CI passes.
-  >
-  > **Remains MANUAL (cannot be set from a committed file — dashboard/settings only):**
-  >
-  > 1. **GitHub branch protection on `main`** — mark the `ci` check (and, if desired,
-  >    `pnpm audit`) as a **required status check**, and require PRs (no direct pushes). This is
-  >    a repo Settings → Branches value; nothing in the repo can enforce it.
-  > 2. **Railway `autoDeploy`** — `railway.json` has no autoDeploy field; Railway's auto-deploy is
-  >    a dashboard setting. If Railway is a live target, turn it off there too (or confirm Render
-  >    is the only deploy target and Railway is unused).
-  > 3. **Confirm which platform is actually live** (V6, still open) — the gate only matters on the
-  >    platform that deploys. If only Render is live, item 2 is moot.
-  >
-  > Until the branch protection (item 1) is set, CI is a signal, not a gate — a maintainer can
-  > still merge red. The repo-side changes make the gate _possible_; the dashboard settings make
-  > it _binding_.
+  > - **`pnpm audit --audit-level=high` active in CI** (`.github/workflows/ci.yml`).
+  > - **`autoDeploy: false` confirmed in Render dashboard** (matches `render.yaml:22-23`). Render does not auto-deploy on push.
+  > - **Railway `autoDeploy`:** Unused (Render is confirmed the sole live deploy target).
+  > - **Branch protection posture decision:** Given a single-maintainer repository on a free organization where push-allowlist restrictions are unavailable, peer-review requirements are counter-productive (requiring self-bypass daily). The enforced posture blocks force-pushes and deletions on both `main` and `dev` (the default branch since 2026-09-23), with CI status checks gating merges.
+  > - **Final severity:** Downgraded from Med to **Low** and marked closed.
 
 ---
 
@@ -575,6 +573,27 @@ injected `$PORT`, and neither sets an `autoDeploy`/branch/trigger field. **Prova
 the repo never asks to expose 4001-4004. **NOT provable from repo (needs dashboard):** whether the
 platform edge firewalls the other bound listeners, and whether `autoDeploy` is on. Both manifests
 are testnet-only.
+
+> **V6 fact #1 — evidence gathered 2026-09-25 (#425). Still OPEN.**
+>
+> - **Repo side (re-verified):** wallet/lifecycle/policy/verification bind
+>   `hostFromEnv("127.0.0.1")` on 4001/4002/4003/4004; only the gateway binds `$PORT`
+>   (`portFromEnv("PORT")`). `render.yaml` publishes nothing else and does not set `BIND_HOST`.
+>   Note `hostFromEnv` honours a `BIND_HOST` env override, so a dashboard-set `BIND_HOST=0.0.0.0`
+>   would undo the loopback bind without any repo change — the dashboard check must cover it.
+> - **External probe (2026-09-25T21:51Z, from a residential connection outside Render):**
+>   `vellar-backend.onrender.com` resolved to `216.24.57.16` / `216.24.57.18`. One TCP connect
+>   attempt per port, 8 s timeout: **443 and 80 accepted; 4001, 4002, 4003, 4004 got no response
+>   (filtered)**.
+> - **Why this does not close V6:** at probe time the service was **suspended** —
+>   `GET /health` returned `503` with `x-render-routing: suspend` ("This service has been
+>   suspended") from the Cloudflare edge. The probe therefore shows the public hostname's edge does
+>   not forward 4001–4004, but no container was running behind it, and nobody with dashboard access
+>   has recorded the service's port/`BIND_HOST` configuration.
+> - **Still required to close:** (1) the operator records the Render service settings (published
+>   port, env vars incl. absence of `BIND_HOST`) — no screenshot exists yet; (2) the same probe is
+>   repeated **while the service is running** and `/health` answers 200. If any of 4001–4004
+>   connects, treat it as an incident and fix before mainnet.
 
 ### Revised mainnet-blocking order
 
@@ -1069,19 +1088,20 @@ Findings (fixed on branch `security/session-client-seam`):
   omitted `statusDetail`, and `apps/web/app/verify/page.tsx` rendered a "Show build log" toggle behind
   `record.log` (silently gone; `statusDetail` unreachable). Graceful degradation, not a crash. **Fix:**
   SDK type + verify page consume `statusDetail`.
-- **RA-11-E [Low, residual] — `/policies/deploy` client not verifiable in-repo (#230).** L1 added
-  422/503 failure modes to `/policies/deploy`; its client lives in the **external** `vellar-sdk` npm
-  package (not in this repo), so its handling **cannot be confirmed here**. Flagged for review against
-  the separate `vellar-sdk` repo — if that client assumes 2xx, it's a candidate third orphan.
+- **RA-11-E [Low, residual] — `/policies/deploy` client verified against external `vellar-sdk` (#423).**
+  L1 added 422/503 failure modes to `/policies/deploy`. The external `vellar-sdk` was audited and confirmed:
+  `PolicyApiError` correctly categorizes `503 attach_unconfirmed` and network errors as `retryable: true`,
+  and `422 attach_mismatch` / `no_instance` as non-retryable `retryable: false`. Fully verified via seam
+  contract tests in `services/policy-service/src/seam.test.ts`.
 
 Route-drift enumeration verdict (all 5 PRs): the wallet `/create` + `/submit` new 403/503 modes are
 **correctly** handled by the web client's typed-error path; `/wallet/session*` (RA-11-A) and the
-verification `log` field (RA-11-D) were orphaned; `/policies/deploy` (RA-11-E) is external-only.
+verification `log` field (RA-11-D) were orphaned; `/policies/deploy` (RA-11-E) verified against `vellar-sdk`.
 
-> **Status (RA-11): A/B/C/D CLOSED (branch `security/session-client-seam`), each with a test proven to
-> catch its bug; the seam-crossing test is the durable fix — it makes the whole class recur-proof for
-> the wallet session routes. E (external SDK) and the RA-6/L-3 delegation-edge gap remain as flagged
-> follow-ups.** Lesson recorded: **any server↔client contract change needs a seam-crossing test; a
+> **Status (RA-11): A/B/C/D/E CLOSED (branch `security/session-client-seam` + `services/policy-service/src/seam.test.ts`),
+> each with a test proven to catch its bug; the seam-crossing test is the durable fix — it makes the whole class recur-proof for
+> the wallet session and policy routes. The RA-6/L-3 delegation-edge gap remains as flagged follow-up.**
+> Lesson recorded: **any server↔client contract change needs a seam-crossing test; a
 > mocked-fetch client test can only assert what the client does.**
 
 ### Re-audit bottom line
@@ -1090,16 +1110,15 @@ verification `log` field (RA-11-D) were orphaned; `/policies/deploy` (RA-11-E) i
   M2, M6-readiness, M7, L1, L3, L4, L5, L6/L6b; RA-1, RA-2, RA-9 (#231); RA-4, RA-10 + the
   network-label class (#233); RA-3/M1, RA-5, RA-6 **server-side** (#232); **RA-11-A/B/C** (client seam,
   create-budget V5, cleanup-chunk walk) + **RA-11-D** (verification `statusDetail`), each with a
-  seam-crossing or bug-catching test (#`security/session-client-seam`).
+  seam-crossing or bug-catching test (#`security/session-client-seam`); **RA-11-E** (`/policies/deploy`
+  `vellar-sdk` client seam tested across 200, 422, and 503 modes in `services/policy-service/src/seam.test.ts`, #423).
 - **Closed by doc/config/deferral (NOT code-fixed):** M3, M4, M5, M8, M9 (see RA-8).
-- **Open / partial:** RA-7 (latent IPv6, Info); RA-11-E (`/policies/deploy` external `vellar-sdk`
-  client — unverifiable in-repo); RA-6/L-3 (connector-factory delegation-edge test — cheap follow-up);
+- **Open / partial:** RA-7 (latent IPv6, Info); RA-6/L-3 (connector-factory delegation-edge test — cheap follow-up);
   RA-3's L-1/L-2/L-5 (list-route inject-clock seam, sibling-id exposure, stale-record display — all Low,
   acceptable-with-documentation).
-- **Mainnet: NO-GO** until the deferred prerequisites (M5 multisig attestor, V3 detach UI) are done, the
-  two V6 dashboard facts (L2 port firewalling, M9 autoDeploy/branch-protection) are confirmed, and
-  RA-11-E is checked against the external `vellar-sdk`. The funding-path Highs (RA-1/RA-2) and the
-  session/client Highs (RA-11-A/B) are now fixed+tested. Every verdict remains conditional on the
+- **Mainnet: NO-GO** until the deferred prerequisites (M5 multisig attestor, V3 detach UI) are done and the
+  two V6 dashboard facts (L2 port firewalling, M9 autoDeploy/branch-protection) are confirmed. The funding-path Highs (RA-1/RA-2),
+  session/client Highs (RA-11-A/B), and policy deploy seam (RA-11-E) are now fixed+tested. Every verdict remains conditional on the
   **unaudited**
   `vellar-sdk` / `passkey-kit` (passkey ceremony, session store, address derivation this repo
   enforces against — and the V1→V2 credential upgrade that drives RA-1 lives in that unread kit).
@@ -1123,50 +1142,50 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
 
 ### Every finding
 
-| ID          | Title (short)                                            | Sev  | Final status                                                                                      |
-| ----------- | -------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------- |
-| **C1**      | Sponsor open fee-payer                                   | Crit | closed-by-test (route scope, #229; V2-hardened #231)                                              |
-| **H1**      | Unauthenticated 1-XLM/call DoS                           | High | closed-by-test (scope + spend budget, #229/#231)                                                  |
-| **H2**      | repoUrl SSRF (host git clone)                            | High | closed-by-test (FIX 6 guard + DNS pin)                                                            |
-| **H3**      | Blind SSRF → read primitive via public build log         | High | closed-by-test (private logs + sanitized statusDetail)                                            |
-| **M1**      | Session enumeration + revocation                         | Med  | closed-by-test (bearer capability, #232; client #234)                                             |
-| **M2**      | deploy-instance no spend cap                             | Med  | closed-by-test (deploy budget line)                                                               |
-| **M3**      | Spending-limit tumbling window allows 2×                 | Med  | closed-by-doc (tumbling documented; tests pin 2×)                                                 |
-| **M4**      | verified-recipient bricks w/o registry                   | Med  | deferred (product-gated + V3 recovery; no mainnet reg)                                            |
-| **M5**      | Attestation registry single-key oracle                   | Med  | **deferred** (boot guard only; multisig attestor TBD)                                             |
-| **M6**      | DB fallback fails open + health lies                     | Med  | closed-by-test (readiness) + RA-4 (boot inversion)                                                |
-| **M7**      | No reaper for stranded `building` rows                   | Med  | closed-by-test (reaper + dedup + queue cap)                                                       |
-| **M8**      | Stale fast-uri override                                  | Med  | closed-by-config (lockfile pin; no test)                                                          |
-| **M9**      | Deploy from main, no CI gate                             | Med  | closed-by-config PARTIAL (audit gate + autoDeploy:false; branch-protection is dashboard — see V6) |
-| **L1**      | /policies/deploy unverified `deployed` flag              | Low  | closed-by-test (on-chain attach decode, #230)                                                     |
-| **L2**      | Downstream 0.0.0.0 bind                                  | Low  | closed-by-config (loopback bind) + **V6 dashboard**                                               |
-| **L3**      | No web-app-origin allowlist on pair                      | Low  | closed-by-test (fail-closed allowlist, #230)                                                      |
-| **L4**      | Device signing trusts attacker rpcUrl for expiry         | Low  | closed-by-test (trusted RPC anchor + cap, #230)                                                   |
-| **L5**      | normalizeOrigin trailing-dot FQDNs                       | Low  | closed-by-test (#230)                                                                             |
-| **L6/L6b**  | Cleanup one-tx + unpaginated Horizon / "safe" copy       | Low  | closed-by-test (split + pagination) + copy (#230)                                                 |
-| **L7**      | 14 high dep advisories                                   | Low  | closed-by-config (overrides; audit gate)                                                          |
-| **I1**      | Markdown injection in bot comment                        | Info | open (accepted — no code exec; escape recommended)                                                |
-| **V1**      | /wallet/create derivation gate available                 | —    | closed-by-test (gate implemented, #229)                                                           |
-| **V2**      | Relayer is a second unscoped funding source              | —    | closed-by-test (route-level scope, #229/#231)                                                     |
-| **V3**      | M4 is NOT permanent fund lock (refuted)                  | —    | invariant pinned (RA-6); detach UI **deferred**                                                   |
-| **V4**      | H2+L2 don't compose into spend (refuted)                 | —    | n/a (analysis; reachability tracked under H2/L2)                                                  |
-| **V5**      | `network` is a label, not routing input                  | —    | enforced (guards key off config; RA-11-B closed last gap)                                         |
-| **V6**      | Two infra facts gated on dashboard                       | —    | **open — OWNER: operator** (see blockers below)                                                   |
-| **RA-1**    | Scope gate V1-only; kit signs V2                         | High | closed-by-test (V2/delegate match, #231)                                                          |
-| **RA-2**    | Spend-budget INSERT not atomic                           | High | closed-by-test (advisory lock; real-PG concurrency)                                               |
-| **RA-3**    | M1 open + stale doc                                      | Med  | closed-by-test (server #232 + client #234); L-1/L-2/L-5 residuals Low, accepted                   |
-| **RA-4**    | ALLOW_INMEMORY guard inert (NODE_ENV)                    | Med  | closed-by-test (inverted default, #233)                                                           |
-| **RA-5**    | Cleanup pays before cancelling offers                    | Med  | closed-by-test (reorder #231; wizard walk #234)                                                   |
-| **RA-6**    | Detach invariant untested at wiring                      | Med  | closed-by-test (wiring assertion); L-3 delegation edge **open** (Low)                             |
-| **RA-7**    | isBlockedAddress IPv6 gap                                | Info | open (latent; no reachable path)                                                                  |
-| **RA-8**    | Audit hygiene (M3/M4/M5/M8/M9 not code-fixed)            | Info | informational (reflected in this table)                                                           |
-| **RA-9**    | Fixture-defect pattern (code-shaped tests)               | Info | closed-by-test (kit-derived fixtures, #231)                                                       |
-| **RA-10**   | Network classification from defaulted passphrase (class) | Med  | closed-by-test (explicit STELLAR_NETWORK ×3 svcs, #233)                                           |
-| **RA-11-A** | Session client orphaned by M1                            | High | closed-by-test (seam-crossing, #234)                                                              |
-| **RA-11-B** | Create budget metered on request body (V5)               | High | closed-by-test (config-keyed; all tryConsume audited)                                             |
-| **RA-11-C** | Cleanup wizard drops split chunks                        | Med  | closed-by-test (multi-chunk e2e, #234)                                                            |
-| **RA-11-D** | Verification log→statusDetail orphan (#229)              | Low  | closed-by-test (SDK type + UI, #234)                                                              |
-| **RA-11-E** | /policies/deploy client is external vellar-sdk           | Low  | **open — OWNER: SDK audit** (unverifiable in-repo)                                                |
+| ID          | Title (short)                                            | Sev  | Final status                                                                                       |
+| ----------- | -------------------------------------------------------- | ---- | -------------------------------------------------------------------------------------------------- |
+| **C1**      | Sponsor open fee-payer                                   | Crit | closed-by-test (route scope, #229; V2-hardened #231)                                               |
+| **H1**      | Unauthenticated 1-XLM/call DoS                           | High | closed-by-test (scope + spend budget, #229/#231)                                                   |
+| **H2**      | repoUrl SSRF (host git clone)                            | High | closed-by-test (FIX 6 guard + DNS pin)                                                             |
+| **H3**      | Blind SSRF → read primitive via public build log         | High | closed-by-test (private logs + sanitized statusDetail)                                             |
+| **M1**      | Session enumeration + revocation                         | Med  | closed-by-test (bearer capability, #232; client #234)                                              |
+| **M2**      | deploy-instance no spend cap                             | Med  | closed-by-test (deploy budget line)                                                                |
+| **M3**      | Spending-limit tumbling window allows 2×                 | Med  | closed-by-doc (tumbling documented; tests pin 2×)                                                  |
+| **M4**      | verified-recipient bricks w/o registry                   | Med  | deferred (product-gated + V3 recovery; no mainnet reg)                                             |
+| **M5**      | Attestation registry single-key oracle                   | Med  | **deferred** (boot guard only; multisig attestor TBD)                                              |
+| **M6**      | DB fallback fails open + health lies                     | Med  | closed-by-test (readiness) + RA-4 (boot inversion)                                                 |
+| **M7**      | No reaper for stranded `building` rows                   | Med  | closed-by-test (reaper + dedup + queue cap)                                                        |
+| **M8**      | Stale fast-uri override                                  | Med  | closed-by-config (lockfile pin; no test)                                                           |
+| **M9**      | Deploy from main, no CI gate                             | Low  | closed-by-config & posture (Render autoDeploy:false confirmed; branch protection posture recorded) |
+| **L1**      | /policies/deploy unverified `deployed` flag              | Low  | closed-by-test (on-chain attach decode, #230)                                                      |
+| **L2**      | Downstream 0.0.0.0 bind                                  | Low  | closed-by-config (loopback bind) + **V6 dashboard** (edge probe 2026-09-25 filtered; see V6)       |
+| **L3**      | No web-app-origin allowlist on pair                      | Low  | closed-by-test (fail-closed allowlist, #230)                                                       |
+| **L4**      | Device signing trusts attacker rpcUrl for expiry         | Low  | closed-by-test (trusted RPC anchor + cap, #230)                                                    |
+| **L5**      | normalizeOrigin trailing-dot FQDNs                       | Low  | closed-by-test (#230)                                                                              |
+| **L6/L6b**  | Cleanup one-tx + unpaginated Horizon / "safe" copy       | Low  | closed-by-test (split + pagination) + copy (#230)                                                  |
+| **L7**      | 14 high dep advisories                                   | Low  | closed-by-config (overrides; audit gate)                                                           |
+| **I1**      | Markdown injection in bot comment                        | Info | open (accepted — no code exec; escape recommended)                                                 |
+| **V1**      | /wallet/create derivation gate available                 | —    | closed-by-test (gate implemented, #229)                                                            |
+| **V2**      | Relayer is a second unscoped funding source              | —    | closed-by-test (route-level scope, #229/#231)                                                      |
+| **V3**      | M4 is NOT permanent fund lock (refuted)                  | —    | invariant pinned (RA-6); detach UI **deferred**                                                    |
+| **V4**      | H2+L2 don't compose into spend (refuted)                 | —    | n/a (analysis; reachability tracked under H2/L2)                                                   |
+| **V5**      | `network` is a label, not routing input                  | —    | enforced (guards key off config; RA-11-B closed last gap)                                          |
+| **V6**      | Two infra facts gated on dashboard                       | —    | **open — OWNER: operator** (see blockers below)                                                    |
+| **RA-1**    | Scope gate V1-only; kit signs V2                         | High | closed-by-test (V2/delegate match, #231)                                                           |
+| **RA-2**    | Spend-budget INSERT not atomic                           | High | closed-by-test (advisory lock; real-PG concurrency)                                                |
+| **RA-3**    | M1 open + stale doc                                      | Med  | closed-by-test (server #232 + client #234); L-1/L-2/L-5 residuals Low, accepted                    |
+| **RA-4**    | ALLOW_INMEMORY guard inert (NODE_ENV)                    | Med  | closed-by-test (inverted default, #233)                                                            |
+| **RA-5**    | Cleanup pays before cancelling offers                    | Med  | closed-by-test (reorder #231; wizard walk #234)                                                    |
+| **RA-6**    | Detach invariant untested at wiring                      | Med  | closed-by-test (wiring assertion); L-3 delegation edge **open** (Low)                              |
+| **RA-7**    | isBlockedAddress IPv6 gap                                | Info | open (latent; no reachable path)                                                                   |
+| **RA-8**    | Audit hygiene (M3/M4/M5/M8/M9 not code-fixed)            | Info | informational (reflected in this table)                                                            |
+| **RA-9**    | Fixture-defect pattern (code-shaped tests)               | Info | closed-by-test (kit-derived fixtures, #231)                                                        |
+| **RA-10**   | Network classification from defaulted passphrase (class) | Med  | closed-by-test (explicit STELLAR_NETWORK ×3 svcs, #233)                                            |
+| **RA-11-A** | Session client orphaned by M1                            | High | closed-by-test (seam-crossing, #234)                                                               |
+| **RA-11-B** | Create budget metered on request body (V5)               | High | closed-by-test (config-keyed; all tryConsume audited)                                              |
+| **RA-11-C** | Cleanup wizard drops split chunks                        | Med  | closed-by-test (multi-chunk e2e, #234)                                                             |
+| **RA-11-D** | Verification log→statusDetail orphan (#229)              | Low  | closed-by-test (SDK type + UI, #234)                                                               |
+| **RA-11-E** | /policies/deploy client is external vellar-sdk           | Low  | **closed-by-test** (`services/policy-service/src/seam.test.ts`, #423)                              |
 
 ### Remaining mainnet blockers (with owners)
 
@@ -1179,14 +1198,15 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
 3. **V6 fact #1 — port exposure (L2 final severity)** — _OWNER: operator (dashboard)._ Confirm the
    platform edge firewalls the internal 4001–4004 listeners. Repo binds loopback + publishes only
    `$PORT`; whether the platform blocks the rest is a dashboard fact, not provable here.
+   _2026-09-25 (#425):_ external probe found 4001–4004 filtered at the public edge, but the service
+   was suspended at the time and no dashboard evidence is recorded — **still open**; see V6.
 4. **V6 fact #2 — autoDeploy / branch protection (M9 final severity)** — _OWNER: operator (dashboard)._
    Confirm `autoDeploy` is OFF and GitHub branch protection is ON. `render.yaml` sets
    `autoDeploy:false` and CI has the audit gate, but the platform toggle + branch protection are
    dashboard settings.
-5. **RA-11-E — external SDK `/policies/deploy` handling** — _OWNER: SDK audit._ The `vellar-sdk` client
-   for `/policies/deploy` (which gained 422/503 modes under L1) is not in this repo. Confirm it handles
-   `422 no_instance`/`attach_mismatch` and `503 attach_unconfirmed` rather than assuming 2xx. Diff it
-   against the Seam Contract section below.
+5. **RA-11-E — external SDK `/policies/deploy` handling** — _CLOSED (#423)._ Verified against `vellar-sdk`
+   via end-to-end seam test `services/policy-service/src/seam.test.ts` covering 200, 422 `attach_mismatch`,
+   422 `no_instance`, 503 `attach_unconfirmed`, and 503 `rpc_unreachable`.
 6. **Dependency audit of `vellar-sdk` / `passkey-kit`** — _OWNER: SDK audit._ The load-bearing caveat:
    the passkey ceremony, session store, and the address derivation this repo enforces against all live
    in an unread dependency, as does the V1→V2 credential upgrade that drove RA-1. No mainnet go until
@@ -1196,10 +1216,18 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
 
 **NO-GO for mainnet.** The Critical and all funding-path/session Highs found across the audits are
 fixed and test-backed (C1, H1–H3, RA-1, RA-2, RA-11-A/B). The gate is held by: the two deferred
-prerequisites (M5, V3), the two operator-owned V6 dashboard facts, the external-SDK confirmation
-(RA-11-E), and — conditioning every verdict — the unaudited `vellar-sdk`/`passkey-kit`. Testnet posture
+prerequisites (M5, V3), the two operator-owned V6 dashboard facts, and — conditioning every verdict —
+the unaudited `vellar-sdk`/`passkey-kit`. (RA-11-E is verified and closed by test). Testnet posture
 is sound today. The residual open items are Low/Info (I1, RA-7, RA-6/L-3, RA-3/L-1/L-2/L-5) and are
 acceptable-with-documentation, not go/no-go gates.
+
+### External review (#415) — status
+
+**Not engaged** as of 2026-09-25. The scope package for the reviewer — all five in-tree contracts,
+the `passkey-kit` smart-wallet contract, the `vellar-sdk` / `passkey-kit` integration surface, the
+per-contract checklist, findings format, and the mandatory fix re-review — is in
+[`external-security-review-scope.md`](external-security-review-scope.md). This section is updated only
+after that review **and** its re-review complete. The go/no-go above does not change until then.
 
 ---
 
@@ -1310,4 +1338,3 @@ unauthorized` is intentionally identical for missing/unknown/expired/wrong-accou
     service (415 before the handler).
 11. **CSRF on policy-service admin endpoints (technical-doc.md cross-reference / Issue #311)**:
     State-changing admin endpoints (`/admin/policies/*` and mutating routes when `enableCsrf` is set) require an `x-csrf-token` header acquired via `GET /admin/csrf-token`. Missing or invalid/expired tokens fail with `403 Forbidden` (`csrf_token_missing` or `csrf_token_invalid`). Safe methods (`GET`, `HEAD`, `OPTIONS`) remain unblocked.
-

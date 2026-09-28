@@ -453,6 +453,41 @@ button.lpa-panel:disabled {
   color: var(--lpa-bad);
 }
 
+/* ---- Segmented switch (Send | Swap) ---------------------------- */
+
+.lpa-seg {
+  display: inline-flex;
+  border: 1px solid var(--lp-line-strong);
+}
+.lpa-seg button {
+  padding: 8px 18px;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--lp-ink-soft);
+  background: var(--lp-paper);
+  border: 0;
+  cursor: pointer;
+  transition:
+    background var(--lp-dur-fast) ease,
+    color var(--lp-dur-fast) ease;
+}
+.lpa-seg button + button {
+  border-left: 1px solid var(--lp-line-strong);
+}
+.lpa-seg button:hover:not(.active) {
+  background: var(--lp-paper-tint);
+  color: var(--lp-ink);
+}
+.lpa-seg button.active {
+  background: var(--lp-mint-soft);
+  color: var(--lp-ink);
+}
+.lpa-seg button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--lp-ink);
+}
+
 /* ---- Status text ---------------------------------------------- */
 
 .lpa-ok {

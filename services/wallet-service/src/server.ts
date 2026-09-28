@@ -9,6 +9,7 @@ import {
   recordOutcome,
   type SpendBudget,
   type BudgetNetwork,
+  registerTracing,
 } from "@vellar/service-kit";
 import {
   createMemoryAuditLog,
@@ -22,8 +23,18 @@ import {
 } from "./repository";
 import { SubmissionError, type TransactionSubmitter } from "./relayer";
 import { assertScopedToKnownWallets, ScopeError } from "./scope";
+import {
+  createMemoryReplayGuard,
+  extractReplayKeys,
+  RELEASABLE_SUBMISSION_CODES,
+  replayFingerprint,
+  type ReplayGuard,
+  type ReplayKey,
+  type ReserveResult,
+} from "./replay";
+import { assertScopedToKnownWallets, extractAddressAuthSubjects, ScopeError } from "./scope";
 import { assertDerivedContractId, DerivationMismatchError } from "./derivation";
-import type { CacheOperation } from "./cache-metrics";
+import { initCacheMetrics, type CacheOperation } from "./cache-metrics";
 import { NoOpCache } from "./cache";
 
 // Wallet API (idea.md §11). No POST /wallet/sign: signing is client-side via
@@ -52,6 +63,19 @@ const submitBodySchema = z.object({
 const listSessionsQuerySchema = z.object({
   contractId: z.string().min(1),
   network: networkSchema,
+});
+
+// Issue #256: cursor-based pagination for GET /wallet/transactions. limit is
+// capped (not just defaulted) server-side — the query schema alone cannot
+// express "clamp to a max", so DEFAULT_TX_HISTORY_LIMIT/MAX_TX_HISTORY_LIMIT
+// below do that after parsing.
+const DEFAULT_TX_HISTORY_LIMIT = 20;
+const MAX_TX_HISTORY_LIMIT = 100;
+const listTransactionsQuerySchema = z.object({
+  contractId: z.string().min(1),
+  network: networkSchema,
+  after: z.string().min(1).optional(),
+  limit: z.coerce.number().int().positive().optional(),
 });
 
 const revokeSessionBodySchema = z.object({
@@ -106,6 +130,10 @@ export interface WalletServiceDeps {
    * meter (fails closed). Metering on the body would let a caller split spend
    * across the testnet/mainnet partitions and double the effective ceiling. */
   budgetNetwork?: BudgetNetwork;
+  /** Replay reservations for /wallet/submit (issue #416). Defaults to an
+   * in-memory guard; index.ts wires the Postgres guard when durable. Applied
+   * whenever `networkPassphrase` is set (the same condition as scoping). */
+  replayGuard?: ReplayGuard;
   passkeyRateLimitMax?: number;
   passkeyRateLimitWindowMs?: number;
   /** Optional job enqueuer for worker-service jobs (Issue #299). */
@@ -124,6 +152,7 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
   const sessions = deps.sessions ?? createMemorySessionRepository();
   const audit = deps.audit ?? createMemoryAuditLog();
   const cache = deps.cache ?? new NoOpCache();
+  const replayGuard = deps.replayGuard ?? createMemoryReplayGuard();
   const now = deps.now ?? (() => new Date());
   const { submitter } = deps;
 
@@ -132,8 +161,10 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
   const passkeyRateLimitWindowMs = deps.passkeyRateLimitWindowMs ?? 60_000;
 
   const app = Fastify({ logger: true });
+  registerTracing(app, "wallet-service");
   registerHealth(app, "wallet-service", { isReady: deps.isReady });
   registerMetrics(app, "wallet-service");
+  initCacheMetrics();
   registerCorrelationId(app);
 
   async function openSession(contractId: string, network: "testnet" | "mainnet") {
@@ -249,7 +280,12 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
 
     await wallets.insert({ keyId, contractId, network, createdAt: now().toISOString() });
     const session = await openSession(contractId, network);
-    await audit.record("wallet.created", { contractId, network, txHash: hash, correlationId: request.correlationId });
+    await audit.record("wallet.created", {
+      contractId,
+      network,
+      txHash: hash,
+      correlationId: request.correlationId,
+    });
     recordOutcome(domainMetrics.walletCreated, "wallet-service", "success", network);
     return reply.code(201).send({ contractId, sessionId: session.id, txHash: hash });
   });
@@ -280,7 +316,8 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
         .header("retry-after", Math.ceil((record.resetAt - currentTime) / 1000))
         .send({
           error: "rate_limited",
-          message: "Too many authentication attempts for this account or IP. Please try again later.",
+          message:
+            "Too many authentication attempts for this account or IP. Please try again later.",
         });
     }
 
@@ -291,7 +328,11 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     }
 
     const session = await openSession(wallet.contractId, network);
-    await audit.record("wallet.connected", { contractId: wallet.contractId, network, correlationId: request.correlationId });
+    await audit.record("wallet.connected", {
+      contractId: wallet.contractId,
+      network,
+      correlationId: request.correlationId,
+    });
     recordOutcome(domainMetrics.walletPasskeyAuth, "wallet-service", "success", network);
     return reply.send({ contractId: wallet.contractId, sessionId: session.id });
   });
@@ -302,6 +343,16 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
       return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
     }
     const { signedXdr, network } = parsed.data;
+
+    // Address-credential auth subjects (the wallet contractId(s) this tx acts
+    // on behalf of), extracted once and reused for both the scoping check
+    // below and the tx history audit record (issue #256), so a submitted tx
+    // shows up under GET /wallets/:id/transactions for its owning wallet.
+    // Independent of the networkPassphrase gate: history should not silently
+    // stop working just because that guard happens to be disabled.
+    const walletSubjects = deps.networkPassphrase
+      ? extractAddressAuthSubjects(signedXdr, deps.networkPassphrase)
+      : [];
 
     // Scope BOTH funding paths (sponsor + relayer) at the route, before the
     // submitter picks a branch (security-audit.md C1/H1/V2): only sponsor/relay
@@ -330,14 +381,79 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
       }
     }
 
+    // Replay reservation (issue #416), AFTER scoping (so unknown-wallet junk
+    // cannot fill the table) and BEFORE the submitter — i.e. before simulation,
+    // budget consumption, signing, or send. Keyed on each address-credential
+    // auth entry's (address, nonce), which survives any re-wrapping of the
+    // envelope; see src/replay.ts. Fails CLOSED on a storage error.
+    let replayKeys: ReplayKey[] = [];
+    if (deps.networkPassphrase) {
+      replayKeys = extractReplayKeys(signedXdr, deps.networkPassphrase);
+      let reserved: ReserveResult;
+      try {
+        reserved = await replayGuard.reserve(replayKeys);
+      } catch (err) {
+        request.log.error(err, "replay reservation failed; refusing submission");
+        recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
+        return reply.code(503).send({
+          error: "replay_store_unavailable",
+          message: "Cannot record this submission right now; try again shortly.",
+        });
+      }
+      if (!reserved.ok) {
+        const fingerprint = replayFingerprint(replayKeys);
+        request.log.warn({ fingerprint }, "rejected replayed submission");
+        // Audit the rejection with the credential subjects and a key-set
+        // fingerprint only — never the signed XDR or signatures. A failed audit
+        // write does not turn a rejection into an acceptance.
+        try {
+          await audit.record("tx.replay_rejected", {
+            network,
+            subjects: [...new Set(replayKeys.map((k) => k.address))],
+            fingerprint,
+            correlationId: request.correlationId,
+          });
+        } catch (err) {
+          request.log.error(err, "failed to audit replay rejection");
+        }
+        recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
+        return reply.code(409).send({
+          error: "replayed_submission",
+          message: "This signed authorization has already been submitted.",
+        });
+      }
+    }
+
     try {
       const { hash } = await submitter.submit(signedXdr);
-      await audit.record("tx.submitted", { network, txHash: hash, correlationId: request.correlationId });
+      // One audit row per wallet subject: a tx with two address-credential
+      // subjects (rare, but the type allows it) must show up in BOTH wallets'
+      // history, not just the first.
+      for (const contractId of walletSubjects) {
+        await audit.record(
+          "tx.submitted",
+          { network, txHash: hash, correlationId: request.correlationId },
+          contractId,
+        );
+      }
+      if (walletSubjects.length === 0) {
+        // No address-credential subject (e.g. networkPassphrase unset) — still
+        // record the event, just without wallet attribution, matching prior
+        // behavior exactly.
+        await audit.record("tx.submitted", { network, txHash: hash, correlationId: request.correlationId });
+      }
       recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "success", network);
       return reply.send({ hash });
     } catch (err) {
       const sub = err instanceof SubmissionError ? err : undefined;
       request.log.error(err, "transaction submission failed");
+      // Release only when the failure provably preceded any send; otherwise the
+      // nonce may be spent on-chain and a retry must be a fresh signature.
+      if (replayKeys.length > 0 && sub && RELEASABLE_SUBMISSION_CODES.has(sub.code)) {
+        await replayGuard.release(replayKeys).catch((releaseErr: unknown) => {
+          request.log.error(releaseErr, "failed to release replay reservation");
+        });
+      }
       recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
       // Submission goes through the relayer/RPC path — a failure here is also an
       // RPC-degradation signal (§13 alerting: tx submission spikes/failures).
@@ -367,6 +483,9 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
       await deps.jobQueue.enqueue({
         ...parsed.data,
         correlationId,
+        // #301: the worker continues this request's trace.
+        traceId: request.traceContext?.traceId,
+        traceParentSpanId: request.traceContext?.spanId,
       });
     }
     request.log.info({ correlationId, recordId: parsed.data.recordId }, "worker job enqueued");
@@ -412,6 +531,41 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     return reply.send({ sessions: await sessions.listByContract(contractId, network) });
   });
 
+  // Cursor-paginated transaction history for an account (issue #256). Same
+  // bearer-session-capability gating as /wallet/sessions above: the bearer
+  // must be a live session bound to exactly the queried contract+network, so
+  // this cannot be used to enumerate another account's history. `network` is
+  // NOT stored per-event today (tx.submitted's audit data carries it, but
+  // filtering happens on `actor` alone), so this endpoint returns every
+  // tx.submitted event for the contractId regardless of network; that is a
+  // pre-existing property of how the audit trail is written, not something
+  // this endpoint introduces.
+  app.get("/wallet/transactions", async (request, reply) => {
+    const parsed = listTransactionsQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_query", details: parsed.error.issues });
+    }
+    const { contractId, network, after } = parsed.data;
+    const limit = Math.min(parsed.data.limit ?? DEFAULT_TX_HISTORY_LIMIT, MAX_TX_HISTORY_LIMIT);
+
+    const session = await resolveSessionCapability(request);
+    if (!session || session.contractId !== contractId || session.network !== network) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    let page;
+    try {
+      page = await audit.listPage({ type: "tx.submitted", actor: contractId, limit, after });
+    } catch {
+      return reply.code(400).send({ error: "invalid_cursor", message: "cursor is not a valid pagination cursor" });
+    }
+    return reply.send({
+      transactions: page.events.map((e) => ({ at: e.at, ...e.data })),
+      hasMore: page.hasMore,
+      nextCursor: page.nextCursor ?? null,
+    });
+  });
+
   // Revoke a session on the caller's OWN account. The target id is in the BODY
   // (not the URL), and must belong to the same account as the bearer — a target
   // on another account reads as not-found (no cross-account revoke, and the
@@ -448,7 +602,7 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
 
     const schema = z.object({
       policyId: z.string().min(1),
-      rules: z.record(z.unknown()).optional(),
+      rules: z.record(z.string(), z.unknown()).optional(),
     });
     const parsed = schema.safeParse(request.body);
     if (!parsed.success) {

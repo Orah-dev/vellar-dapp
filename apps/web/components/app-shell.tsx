@@ -19,6 +19,7 @@ const SIDEBAR_KEY = "vellar.sidebar";
 
 const nav = [
   { href: "/dashboard", label: "Wallet", icon: <WalletIcon /> },
+  { href: "/send", label: "Send / Swap", icon: <SwapIcon /> },
   { href: "/policies", label: "Policies", icon: <ShieldIcon /> },
   { href: "/verify", label: "Verify", icon: <BadgeCheckIcon /> },
   { href: "/cleanup", label: "Clean up", icon: <BroomIcon /> },
@@ -183,6 +184,20 @@ function WalletIcon() {
     >
       <rect x="3" y="6" width="18" height="13" rx="3" />
       <path d="M3 10h18M16 14h.01" />
+    </svg>
+  );
+}
+function SwapIcon() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="M4 8h14l-4-4M20 16H6l4 4" />
     </svg>
   );
 }

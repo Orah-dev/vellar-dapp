@@ -38,7 +38,7 @@ export function validateSecrets(env: NodeJS.ProcessEnv = process.env): void {
   if (missing.length > 0) {
     console.error(
       `[worker-service] Missing required environment secrets: ${missing.join(", ")}. ` +
-        "Set these variables and try again."
+        "Set these variables and try again.",
     );
     throw new Error(`Missing required secrets: ${missing.join(", ")}`);
   }
@@ -51,7 +51,7 @@ export function validateSecrets(env: NodeJS.ProcessEnv = process.env): void {
   if (hasAttestorSecret && !hasRegistryId) {
     console.error(
       "[worker-service] ATTESTOR_SECRET_KEY is set but ATTESTATION_REGISTRY_ID is missing. " +
-        "Set both or neither."
+        "Set both or neither.",
     );
     throw new Error("Incomplete attestor configuration");
   }
@@ -59,14 +59,14 @@ export function validateSecrets(env: NodeJS.ProcessEnv = process.env): void {
   if (hasRegistryId && !hasAttestorSecret) {
     console.error(
       "[worker-service] ATTESTATION_REGISTRY_ID is set but ATTESTOR_SECRET_KEY is missing. " +
-        "Set both or neither."
+        "Set both or neither.",
     );
     throw new Error("Incomplete attestor configuration");
   }
 
   // Log success
   console.info(
-    `[worker-service] All ${REQUIRED_SECRETS.length} required secrets validated successfully.`
+    `[worker-service] All ${REQUIRED_SECRETS.length} required secrets validated successfully.`,
   );
 
   // Log optional features
@@ -74,7 +74,7 @@ export function validateSecrets(env: NodeJS.ProcessEnv = process.env): void {
     console.info("[worker-service] Attestor secrets configured (on-chain attestation enabled).");
   } else {
     console.info(
-      "[worker-service] Attestor secrets not configured (on-chain attestation disabled)."
+      "[worker-service] Attestor secrets not configured (on-chain attestation disabled).",
     );
   }
 }

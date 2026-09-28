@@ -42,6 +42,22 @@ export {
 } from "./network-config";
 
 export {
+  verifySigningKeys,
+  probeSigningKeysOnChain,
+  signingKeyFromEnv,
+  relayerNetwork,
+  SigningKeyConfigError,
+  SIGNING_KEY_ENV,
+  type SigningKeyRole,
+  type SigningKeyInput,
+  type SigningKeyCheckInputs,
+  type SigningKeyReport,
+  type ResolvedSigningKey,
+  type AccountProbe,
+  type OnChainProbeResult,
+} from "./signing-keys";
+
+export {
   validatePublicResourceUrl,
   publicBaseUrlFromEnv,
   X402ResourceUrlError,
@@ -61,15 +77,25 @@ export {
 } from "./budget";
 
 export { createPgSpendBudget, type BudgetDb, type PgBudgetConfig } from "./pg-budget";
+export { canonicalPublisher, publisherIdFor, publisherIdHex } from "./publisher";
+
+export { applyMigrations, type MigrationClient } from "./migrations";
 
 export {
   extractTraceContext,
   injectTraceContext,
   withTraceSpan,
+  childContext,
+  parseTraceparent,
+  toW3CTraceId,
+  newTraceId,
+  newSpanId,
+  registerTracing,
   TraceCollector,
   type TraceSpan,
   type TraceContext,
   type TraceHeaderMap,
+  type SpanListener,
 } from "./tracing";
 
 export {
@@ -81,6 +107,19 @@ export {
   type CircuitBreakerLimits,
   type CircuitState,
 } from "./circuit-breaker";
+
+export {
+  createRpcPool,
+  withRpcFailover,
+  rpcPoolConfigFromEnv,
+  getHealthProbe,
+  type RpcPool,
+  type RpcPoolOptions,
+  type RpcPoolEnv,
+  type RpcProbe,
+  type RpcProbeResult,
+  type RpcEndpointHealth,
+} from "./rpc-pool";
 
 export {
   retryWithBackoff,
@@ -98,9 +137,7 @@ export interface HealthOptions {
   isReady?: () => boolean | Promise<boolean>;
 }
 
-async function evaluateReadiness(
-  isReady: HealthOptions["isReady"],
-): Promise<boolean> {
+async function evaluateReadiness(isReady: HealthOptions["isReady"]): Promise<boolean> {
   if (!isReady) return true;
   try {
     return await isReady();

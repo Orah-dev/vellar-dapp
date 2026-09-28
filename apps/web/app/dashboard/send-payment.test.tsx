@@ -149,4 +149,71 @@ describe("SendPayment", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/insufficient balance/i);
   });
+
+  describe("prefilled from a payment request", () => {
+    function renderRequest(
+      payments: PaymentClient,
+      request: { originDomain: string | null; msg?: string },
+      amount?: string,
+    ) {
+      render(
+        <WalletProvider payments={payments}>
+          <SendPayment
+            from={FROM}
+            token={xlm}
+            network="testnet"
+            onSuccess={vi.fn()}
+            prefill={{ to: TO, ...(amount !== undefined && { amount }) }}
+            request={request}
+          />
+        </WalletProvider>,
+      );
+    }
+
+    it("locks the requested fields and flags an unverified source", () => {
+      renderRequest({ preparePayment: vi.fn() }, { originDomain: null }, "2.5");
+      const to = screen.getByLabelText(/recipient/i) as HTMLInputElement;
+      const amount = screen.getByLabelText(/amount/i) as HTMLInputElement;
+      expect(to.value).toBe(TO);
+      expect(to.readOnly).toBe(true);
+      expect(amount.value).toBe("2.5");
+      expect(amount.readOnly).toBe(true);
+      expect(screen.getByText(/unverified source/i)).toBeDefined();
+    });
+
+    it("lets the payer enter the amount when the request leaves it open", () => {
+      renderRequest({ preparePayment: vi.fn() }, { originDomain: null });
+      expect((screen.getByLabelText(/amount/i) as HTMLInputElement).readOnly).toBe(false);
+    });
+
+    it("never prepares or signs on its own — review then passkey confirm still required", async () => {
+      const confirm = vi.fn().mockResolvedValue({ hash: "txhash123" });
+      const preparePayment = vi.fn().mockResolvedValue(prepared(confirm));
+      renderRequest(
+        { preparePayment },
+        { originDomain: "shop.example.com", msg: "<b>order 7</b>" },
+        "2.5",
+      );
+
+      expect(preparePayment).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: /review payment/i }));
+      const dialog = await screen.findByRole("dialog", { name: /review payment/i });
+
+      expect(preparePayment).toHaveBeenCalledWith({
+        from: FROM,
+        to: TO,
+        token: xlm,
+        amount: 25000000n,
+      });
+      expect(confirm).not.toHaveBeenCalled();
+      // Every field, the verified origin and the requester's note are visible before signing.
+      expect(dialog.textContent).toContain("shop.example.com");
+      expect(dialog.textContent).toContain(TO);
+      expect(dialog.textContent).toContain("CNATIVE");
+      expect(dialog.textContent).toContain("2.5 XLM");
+      // The note renders as text, not markup.
+      expect(dialog.querySelector("b")).toBeNull();
+      expect(dialog.textContent).toContain("<b>order 7</b>");
+    });
+  });
 });

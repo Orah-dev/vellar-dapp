@@ -1,8 +1,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createCachedAccountReader } from "./account-cache";
-import { createNoOpAuditLog } from "./audit";
 import type { HorizonAccount } from "./horizon";
-import { buildServer } from "./server";
+import { buildServer, fakeFacilitatorClient } from "./server";
 
 // buildServer() registers the x402 payment gate, which resolves its public
 // resource URL from the environment and refuses to fall back to the local
@@ -61,7 +60,10 @@ describe("POST /lifecycle/merge invalidates the cached source and destination ac
       },
     };
     const reader = createCachedAccountReader(underlying);
-    const app = buildServer({ reader, auditLog: createNoOpAuditLog() });
+    const app = buildServer({
+      reader,
+      x402FacilitatorClient: fakeFacilitatorClient(),
+    });
     await app.ready();
 
     try {
@@ -109,7 +111,10 @@ describe("POST /lifecycle/merge invalidates the cached source and destination ac
     const plainReader = {
       getAccount: async (id: string) => (id === SOURCE ? sourceAccount() : destAccount("50")),
     };
-    const app = buildServer({ reader: plainReader, auditLog: createNoOpAuditLog() });
+    const app = buildServer({
+      reader: plainReader,
+      x402FacilitatorClient: fakeFacilitatorClient(),
+    });
     await app.ready();
 
     try {
@@ -144,7 +149,10 @@ describe("POST /lifecycle/merge invalidates the cached source and destination ac
       },
     };
     const reader = createCachedAccountReader(underlying);
-    const app = buildServer({ reader, auditLog: createNoOpAuditLog() });
+    const app = buildServer({
+      reader,
+      x402FacilitatorClient: fakeFacilitatorClient(),
+    });
     await app.ready();
 
     try {

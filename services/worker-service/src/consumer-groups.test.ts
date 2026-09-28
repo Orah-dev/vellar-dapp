@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createVerificationGroup } from "./consumer-groups";
 import type { VerificationJobStore } from "./job-store";
-import type { Executor } from "./executor";
-import type { Resolver } from "./resolver";
+import type { BuildExecutor as Executor } from "./executor";
+import type { ContractArtifactResolver as Resolver } from "./resolver";
 
 describe("consumer-groups (issue #354)", () => {
   // Mock dependencies for testing consumer group isolation.
@@ -20,7 +20,7 @@ describe("consumer-groups (issue #354)", () => {
   };
 
   const mockResolver: Resolver = {
-    resolveArtifact: vi.fn(),
+    resolveDeployedHash: vi.fn(),
   };
 
   beforeEach(() => {
@@ -53,10 +53,10 @@ describe("consumer-groups (issue #354)", () => {
 
   it("verification group respects configured concurrency", async () => {
     const concurrency = 3;
-    
+
     // Simulate an empty queue.
     vi.mocked(mockStore.claimSubmitted).mockResolvedValue([]);
-    
+
     const group = createVerificationGroup({
       store: mockStore,
       executor: mockExecutor,
@@ -72,7 +72,9 @@ describe("consumer-groups (issue #354)", () => {
     // With 3 workers, we expect at least 3 claim attempts (one per worker).
     // Note: in practice there may be slightly more due to timing, so we check >= 3.
     expect(mockStore.claimSubmitted).toHaveBeenCalled();
-    expect(vi.mocked(mockStore.claimSubmitted).mock.calls.length).toBeGreaterThanOrEqual(concurrency);
+    expect(vi.mocked(mockStore.claimSubmitted).mock.calls.length).toBeGreaterThanOrEqual(
+      concurrency,
+    );
 
     group.stop();
   });
@@ -92,7 +94,7 @@ describe("consumer-groups (issue #354)", () => {
 
     // After stopping, no new claims should occur.
     const callsBefore = vi.mocked(mockStore.claimSubmitted).mock.calls.length;
-    
+
     // Wait a bit to ensure no new calls.
     setTimeout(() => {
       const callsAfter = vi.mocked(mockStore.claimSubmitted).mock.calls.length;

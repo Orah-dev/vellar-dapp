@@ -1,8 +1,14 @@
 import type { VerificationJobStore } from "./job-store";
-import { startConsumerGroup, type ConsumerGroupHandle, type ConsumerGroupOptions } from "./consumer-group";
-import type { Executor } from "./executor";
-import type { Resolver } from "./resolver";
-import type { Logger } from "./loop";
+import {
+  startConsumerGroup,
+  type ConsumerGroupHandle,
+  type ConsumerGroupOptions,
+} from "./consumer-group";
+import type { BuildExecutor as Executor } from "./executor";
+import type { ContractArtifactResolver as Resolver } from "./resolver";
+import type { WorkerDeps } from "./loop";
+
+type Logger = NonNullable<WorkerDeps["log"]>;
 
 // Domain-specific consumer group definitions (issue #354).
 //
@@ -37,9 +43,7 @@ export interface VerificationGroupOptions {
  * Create a verification consumer group. Handles jobs from the verification
  * store (artifact download, WASM verification, attestation submission).
  */
-export function createVerificationGroup(
-  options: VerificationGroupOptions,
-): ConsumerGroupHandle {
+export function createVerificationGroup(options: VerificationGroupOptions): ConsumerGroupHandle {
   const {
     store,
     executor,

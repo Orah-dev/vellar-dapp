@@ -19,6 +19,7 @@ Origin validation logic was previously accessible only via direct imports from `
 ### 1. **services/permission-service/src/index.ts**
 
 **Before:**
+
 ```typescript
 // @vellar/permission-service — dApp origin permissions, extension connection records, revocation state
 // See CLAUDE.md and BUILD-PLAN.md before implementing.
@@ -26,6 +27,7 @@ export {};
 ```
 
 **After:**
+
 ```typescript
 // @vellar/permission-service — dApp origin permissions, extension connection records, revocation state
 // See CLAUDE.md and BUILD-PLAN.md before implementing.
@@ -37,6 +39,7 @@ export { hasCapability, normalizeOrigin, type PermissionGrant } from "@vellar/pr
 ```
 
 **Rationale:**
+
 - Establishes permission-service as the semantic owner of origin operations (per README)
 - Creates a single, well-defined boundary for all permission-related imports
 - Simplifies future expansion (grant management, revocation state) by keeping them in one place
@@ -46,6 +49,7 @@ export { hasCapability, normalizeOrigin, type PermissionGrant } from "@vellar/pr
 ### 2. **apps/extension/lib/router.ts**
 
 **Before:**
+
 ```typescript
 import {
   errorPayload,
@@ -57,16 +61,14 @@ import {
 ```
 
 **After:**
+
 ```typescript
-import {
-  errorPayload,
-  type ProviderRequest,
-  type ResponsePayload,
-} from "@vellar/provider-sdk";
+import { errorPayload, type ProviderRequest, type ResponsePayload } from "@vellar/provider-sdk";
 import { hasCapability, normalizeOrigin } from "@vellar/permission-service";
 ```
 
 **Rationale:**
+
 - Separates concerns: provider-sdk provides type/message utilities; permission-service provides permission-related validation
 - Makes the extension's dependency on permission-service explicit
 
@@ -75,16 +77,19 @@ import { hasCapability, normalizeOrigin } from "@vellar/permission-service";
 ### 3. **apps/extension/lib/pair-origins.ts**
 
 **Before:**
+
 ```typescript
 import { normalizeOrigin } from "@vellar/provider-sdk";
 ```
 
 **After:**
+
 ```typescript
 import { normalizeOrigin } from "@vellar/permission-service";
 ```
 
 **Rationale:**
+
 - Aligns with the new import boundary; pair-origins is part of the extension's permission model
 
 ---
@@ -92,6 +97,7 @@ import { normalizeOrigin } from "@vellar/permission-service";
 ### 4. **apps/extension/package.json**
 
 **Before:**
+
 ```json
 "dependencies": {
   "@stellar/stellar-sdk": "^16.0.1",
@@ -101,6 +107,7 @@ import { normalizeOrigin } from "@vellar/permission-service";
 ```
 
 **After:**
+
 ```json
 "dependencies": {
   "@stellar/stellar-sdk": "^16.0.1",
@@ -111,6 +118,7 @@ import { normalizeOrigin } from "@vellar/permission-service";
 ```
 
 **Rationale:**
+
 - Explicitly declares the extension's new dependency on permission-service
 
 ---
@@ -120,6 +128,7 @@ import { normalizeOrigin } from "@vellar/permission-service";
 Comprehensive integration test verifying that both import paths (via permission-service facade and direct from provider-sdk) produce **identical validation results** for all edge cases.
 
 **Test coverage:**
+
 - Valid origins (https, http, custom ports)
 - Trailing-dot FQDN normalization (L5 requirement: `"https://app.example.com."` → `"https://app.example.com"`)
 - Invalid cases: paths/queries, non-URLs, dangerous schemes (file://, chrome-extension://, javascript:)
@@ -127,32 +136,33 @@ Comprehensive integration test verifying that both import paths (via permission-
 - Doubled trailing dots (malformed; stays distinct)
 
 **Test vectors (14 cases total):**
+
 ```typescript
 const testVectors = [
   // Valid
   ["https://app.example.com", "https://app.example.com"],
   ["http://localhost:3000", "http://localhost:3000"],
   ["https://app.example.com:8443", "https://app.example.com:8443"],
-  
+
   // Trailing-dot FQDN normalization (L5)
   ["https://app.example.com.", "https://app.example.com"],
   ["https://app.example.com.:8443", "https://app.example.com:8443"],
   ["http://localhost.", "http://localhost"],
-  
+
   // Invalid: path/query/trailing-slash
   ["https://app.example.com/evil", undefined],
   ["https://app.example.com?x=1", undefined],
   ["https://app.example.com/", undefined],
-  
+
   // Invalid: non-URLs
   ["app.example.com", undefined],
   ["", undefined],
-  
+
   // Invalid: dangerous schemes
   ["file:///etc/passwd", undefined],
   ["chrome-extension://abcdef", undefined],
   ["javascript:alert(1)", undefined],
-  
+
   // Invalid: doubled trailing dots
   ["https://app.example.com..", "https://app.example.com."],
 ];
@@ -165,14 +175,18 @@ Each test vector is run through both import paths and verified to produce identi
 ## Verification
 
 ### ✅ No Leftover References
+
 Grepped the extension codebase for any remaining direct imports of origin-validation from provider-sdk:
+
 - No matches for `import.*normalizeOrigin.*provider-sdk`
 - No matches for `import.*hasCapability.*provider-sdk`
 
 All imports have been successfully migrated to permission-service.
 
 ### ✅ Integration Test Confirmation
+
 The integration test (`origin-validation-integration.test.ts`) confirms:
+
 1. Both call paths (permission-service facade and provider-sdk direct) produce identical results
 2. All edge cases from the original provider-sdk tests are covered
 3. Trailing-dot normalization (L5 requirement) works correctly
@@ -199,20 +213,22 @@ The integration test (`origin-validation-integration.test.ts`) confirms:
 
 ## Files Modified
 
-| File | Change | Type |
-|------|--------|------|
-| `services/permission-service/src/index.ts` | Re-export `normalizeOrigin`, `hasCapability`, `PermissionGrant` | Modified |
-| `apps/extension/lib/router.ts` | Import from permission-service instead of provider-sdk | Modified |
-| `apps/extension/lib/pair-origins.ts` | Import from permission-service instead of provider-sdk | Modified |
-| `apps/extension/package.json` | Add `@vellar/permission-service` dependency | Modified |
-| `apps/extension/lib/origin-validation-integration.test.ts` | New comprehensive integration test | New |
+| File                                                       | Change                                                          | Type     |
+| ---------------------------------------------------------- | --------------------------------------------------------------- | -------- |
+| `services/permission-service/src/index.ts`                 | Re-export `normalizeOrigin`, `hasCapability`, `PermissionGrant` | Modified |
+| `apps/extension/lib/router.ts`                             | Import from permission-service instead of provider-sdk          | Modified |
+| `apps/extension/lib/pair-origins.ts`                       | Import from permission-service instead of provider-sdk          | Modified |
+| `apps/extension/package.json`                              | Add `@vellar/permission-service` dependency                     | Modified |
+| `apps/extension/lib/origin-validation-integration.test.ts` | New comprehensive integration test                              | New      |
 
 ---
 
 ## Testing
 
 ### Unit Test Coverage
+
 The new integration test covers 14 test vectors across all edge cases:
+
 - 6 validation scenarios (3 valid + 3 trailing-dot cases)
 - 3 invalid path/query cases
 - 2 invalid non-URL cases
@@ -220,6 +236,7 @@ The new integration test covers 14 test vectors across all edge cases:
 - 1 malformed doubled-trailing-dot case
 
 ### Run Tests Locally
+
 ```bash
 # Extension tests
 pnpm test --filter=@vellar/extension
@@ -249,6 +266,7 @@ All tests should pass without modification to existing logic.
 ## Next Steps
 
 After merging this refactor:
+
 1. **When implementing grant management:** Add grant lookup/storage logic to permission-service alongside existing `hasCapability` export
 2. **When implementing revocation:** Add revocation state tracking to permission-service
 3. **When expanding permission boundaries:** All permission-related logic will be in a single, well-defined service

@@ -3,10 +3,14 @@ import {
   createUnavailableBudget,
   hostFromEnv,
   portFromEnv,
+  probeSigningKeysOnChain,
   resolveNetwork,
   resolvePersistencePolicy,
+  signingKeyFromEnv,
   startService,
   tryConnectDb,
+  verifySigningKeys,
+  type SigningKeyReport,
   type SpendBudget,
 } from "@vellar/service-kit";
 import type { DbHandle } from "./db/client";
@@ -34,6 +38,8 @@ const budgetLimits = {
 };
 
 const config = configFromEnv();
+
+const REPLAY_PURGE_INTERVAL_MS = 15 * 60_000;
 
 // Resolve persistence FIRST — the funding-path budget (FIX 3) needs a durable
 // ledger, and the submitter needs that budget, so DB comes before both.
@@ -93,6 +99,48 @@ const budgetNetwork = resolveNetwork({
   passphrase: config.relayer?.networkPassphrase ?? DEFAULTS.networkPassphrase,
   rpcUrl: process.env.STELLAR_RPC_URL || DEFAULTS.rpcUrl,
 });
+// Q3 (architecture-analysis.md §8): the sponsor secret and relayer are set
+// out-of-band, so confirm they belong to the declared network before anything
+// can sign or spend with them. Refuses to boot on a mismatch; see
+// service-kit/signing-keys.ts.
+const { Keypair, rpc: stellarRpc } = await import("@stellar/stellar-sdk");
+let signingKeys: SigningKeyReport;
+try {
+  signingKeys = verifySigningKeys({
+    network: budgetNetwork,
+    keys: [signingKeyFromEnv("sponsor")],
+    relayerBaseUrl: process.env.RELAYER_BASE_URL || undefined,
+    derivePublicKey: (secret) => Keypair.fromSecret(secret).publicKey(),
+    allowUnpinned: process.env.ALLOW_UNPINNED_SIGNING_KEYS === "1",
+  });
+} catch (err) {
+  console.error(`[wallet-service] ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
+{
+  const rpcServer = new stellarRpc.Server(config.relayer?.rpcUrl ?? DEFAULTS.rpcUrl);
+  void probeSigningKeysOnChain(signingKeys, async (publicKey) => {
+    try {
+      await rpcServer.getAccount(publicKey);
+      return "found";
+    } catch (err) {
+      if (err instanceof Error && /not found/i.test(err.message)) return "not_found";
+      throw err;
+    }
+  }).then((results) => {
+    for (const r of results) {
+      if (r.status === "found") {
+        console.info(`[wallet-service] ${r.role} key ${r.publicKey} confirmed on ${budgetNetwork}.`);
+      } else {
+        console.warn(
+          `[wallet-service] ${r.role} key ${r.publicKey} could not be confirmed on ${budgetNetwork} ` +
+            `(${r.status}${r.detail ? `: ${r.detail}` : ""}) — sponsored submissions will fail until it is funded there.`,
+        );
+      }
+    }
+  });
+}
+
 let budget: SpendBudget;
 if (dbHandle) {
   const { createPgSpendBudget } = await import("@vellar/service-kit");
@@ -101,6 +149,32 @@ if (dbHandle) {
   budget = createUnavailableBudget();
 }
 deps.budget = budget;
+
+// Replay reservations for /wallet/submit (issue #416), on the same server-config
+// network as the budget. Without a durable DB the in-memory default applies —
+// and the funding paths already refuse (unavailable budget), so nothing is
+// sponsored unguarded. Expired reservations (auth past its
+// signatureExpirationLedger, which the chain rejects anyway) are purged against
+// the live ledger; a failed purge only delays cleanup, never weakens the guard.
+let stopReplayPurge: (() => void) | undefined;
+if (dbHandle) {
+  const { createPgReplayGuard } = await import("./db/pg-replay");
+  const { rpc } = await import("@stellar/stellar-sdk");
+  const replayGuard = createPgReplayGuard(dbHandle.db, budgetNetwork);
+  deps.replayGuard = replayGuard;
+  const rpcServer = new rpc.Server(config.relayer?.rpcUrl ?? DEFAULTS.rpcUrl);
+  const purge = async () => {
+    try {
+      const { sequence } = await rpcServer.getLatestLedger();
+      await replayGuard.purgeExpired(sequence);
+    } catch (err) {
+      console.warn(`[wallet-service] replay purge skipped: ${(err as Error).message}`);
+    }
+  };
+  const timer = setInterval(() => void purge(), REPLAY_PURGE_INTERVAL_MS);
+  timer.unref();
+  stopReplayPurge = () => clearInterval(timer);
+}
 // Create budget line meters on the server-config network (V5/RA-3), same source
 // as the sponsor line — never the request body.
 deps.budgetNetwork = budgetNetwork;
@@ -137,7 +211,10 @@ deps.cache = createCacheMetricsWrapper(cache);
 const app = buildServer(deps);
 
 if (closeDb) {
-  app.addHook("onClose", async () => closeDb?.());
+  app.addHook("onClose", async () => {
+    stopReplayPurge?.();
+    await closeDb?.();
+  });
   app.log.info("Postgres connected, migrations applied");
 } else {
   app.log.warn(

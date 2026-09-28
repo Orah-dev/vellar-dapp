@@ -98,9 +98,7 @@ describe("calculateBackoffDelay — exponential backoff with full jitter", () =>
   describe("full jitter randomness", () => {
     it("jitter makes delays non-deterministic", () => {
       // Run 20 times with same inputs — should get different values
-      const delays = Array.from({ length: 20 }, () =>
-        calculateBackoffDelay(3, 1000, 30000)
-      );
+      const delays = Array.from({ length: 20 }, () => calculateBackoffDelay(3, 1000, 30000));
       const uniqueValues = new Set(delays).size;
       // Very unlikely all 20 are identical with true randomness
       expect(uniqueValues).toBeGreaterThan(1);
@@ -108,9 +106,7 @@ describe("calculateBackoffDelay — exponential backoff with full jitter", () =>
 
     it("produces uniform distribution across range", () => {
       // Run many times and check distribution is roughly uniform
-      const delays = Array.from({ length: 100 }, () =>
-        calculateBackoffDelay(1, 1000, 30000)
-      );
+      const delays = Array.from({ length: 100 }, () => calculateBackoffDelay(1, 1000, 30000));
       const min = Math.min(...delays);
       const max = Math.max(...delays);
       const avg = delays.reduce((a, b) => a + b, 0) / delays.length;
@@ -149,11 +145,15 @@ describe("calculateBackoffDelay — exponential backoff with full jitter", () =>
     });
 
     it("handles maxDelayMs < exponential", () => {
-      const spy = vi.spyOn(Math, "random").mockReturnValue(1);
-      const delay = calculateBackoffDelay(2, 1000, 100);
-      // cap would be min(4000, 100) = 100, random(0, 100) with 1.0 = 99
-      expect(delay).toBe(99);
-      spy.mockRestore();
+      // Math.random() is in [0, 1); use its largest value, not 1.
+      const spy = vi.spyOn(Math, "random").mockReturnValue(1 - Number.EPSILON);
+      try {
+        const delay = calculateBackoffDelay(2, 1000, 100);
+        // cap would be min(4000, 100) = 100, random(0, 100) at the top = 99
+        expect(delay).toBe(99);
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 });
@@ -179,9 +179,7 @@ describe("BACKOFF_CONFIG constants", () => {
     // 5 attempts with max 30s delays = ~2 min max window
     expect(BACKOFF_CONFIG.MAX_ATTEMPTS).toBeLessThanOrEqual(10);
     expect(BACKOFF_CONFIG.MAX_DELAY_MS).toBeLessThanOrEqual(60_000);
-    expect(BACKOFF_CONFIG.MAX_RETRY_WINDOW_MS).toBeGreaterThan(
-      BACKOFF_CONFIG.MAX_DELAY_MS * 2
-    );
+    expect(BACKOFF_CONFIG.MAX_RETRY_WINDOW_MS).toBeGreaterThan(BACKOFF_CONFIG.MAX_DELAY_MS * 2);
   });
 
   it("constants are immutable (readonly)", () => {
@@ -197,15 +195,17 @@ describe("theoretical retry window", () => {
     // Worst case: every attempt hits the max delay
     const maxTotalDelay = BACKOFF_CONFIG.MAX_ATTEMPTS * BACKOFF_CONFIG.MAX_DELAY_MS;
     // Should be <= MAX_RETRY_WINDOW_MS
-    expect(maxTotalDelay).toBeLessThanOrEqual(
-      BACKOFF_CONFIG.MAX_RETRY_WINDOW_MS * 2
-    ); // Allow some margin
+    expect(maxTotalDelay).toBeLessThanOrEqual(BACKOFF_CONFIG.MAX_RETRY_WINDOW_MS * 2); // Allow some margin
   });
 
   it("average retry window is reasonable", () => {
-    // With full jitter, average delay per attempt is half the cap
-    const avgDelayPerAttempt = BACKOFF_CONFIG.MAX_DELAY_MS / 2;
-    const avgTotalDelay = BACKOFF_CONFIG.MAX_ATTEMPTS * avgDelayPerAttempt;
+    // With full jitter, the average delay per attempt is half that attempt's
+    // cap: min(MAX_DELAY_MS, BASE_DELAY_MS * 2^attempt).
+    let avgTotalDelay = 0;
+    for (let attempt = 0; attempt < BACKOFF_CONFIG.MAX_ATTEMPTS; attempt++) {
+      avgTotalDelay +=
+        Math.min(BACKOFF_CONFIG.MAX_DELAY_MS, BACKOFF_CONFIG.BASE_DELAY_MS * 2 ** attempt) / 2;
+    }
     // Should complete within a minute on average
     expect(avgTotalDelay).toBeLessThan(60_000);
   });
@@ -213,7 +213,7 @@ describe("theoretical retry window", () => {
   it("prevents thundering herd with full jitter", () => {
     // Simulate 10 jobs all reclaimed at the same time (attempt 0)
     const delays = Array.from({ length: 10 }, () =>
-      calculateBackoffDelay(0, BACKOFF_CONFIG.BASE_DELAY_MS, BACKOFF_CONFIG.MAX_DELAY_MS)
+      calculateBackoffDelay(0, BACKOFF_CONFIG.BASE_DELAY_MS, BACKOFF_CONFIG.MAX_DELAY_MS),
     );
 
     // With full jitter, all should NOT fire at once

@@ -38,12 +38,24 @@ export const walletSessions = pgTable("wallet_sessions", {
   expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
 });
 
-export const activityLogs = pgTable("activity_logs", {
-  id: text("id").primaryKey(),
-  type: text("type").notNull(),
-  at: timestamp("at", { withTimezone: true, mode: "date" }).notNull(),
-  data: jsonb("data").notNull().$type<Record<string, unknown>>(),
-});
+export const activityLogs = pgTable(
+  "activity_logs",
+  {
+    id: text("id").primaryKey(),
+    type: text("type").notNull(),
+    at: timestamp("at", { withTimezone: true, mode: "date" }).notNull(),
+    data: jsonb("data").notNull().$type<Record<string, unknown>>(),
+    // Real, indexed column (issue #256), not the data.actor JSONB field it
+    // was previously read from: a paginated per-wallet transaction history
+    // query needs an indexed predicate, not a full-table load filtered in
+    // application code. Nullable: many event types (session/policy actions
+    // recorded without an actor) have none.
+    actor: text("actor"),
+  },
+  (table) => [
+    index("activity_logs_actor_at_id_idx").on(table.actor, table.at, table.id),
+  ],
+);
 
 // Rolling-window funding-path spend ledger (security-audit.md H1/M2/FIX 3).
 // One row per sponsored/created call; the budget check sums stroops and counts
@@ -60,6 +72,31 @@ export const spendLedger = pgTable(
     at: timestamp("at", { withTimezone: true, mode: "date" }).notNull(),
   },
   (table) => [index("spend_ledger_line_network_at_idx").on(table.line, table.network, table.at)],
+);
+
+// Sponsored-submission replay reservations (issue #416). One row per
+// address-credential auth entry that /wallet/submit has accepted for funding:
+// the PRIMARY KEY (network, address, nonce) is the replay identity and the
+// concurrency arbiter — a concurrent duplicate INSERT blocks on the unique index
+// until the first commits, then conflicts, so at most one caller can reserve a
+// nonce even under READ COMMITTED. Rows are dead once the chain passes
+// expiration_ledger (the auth signature can no longer validate) and are purged
+// against the current ledger; see src/replay.ts.
+export const submissionReplay = pgTable(
+  "submission_replay",
+  {
+    network: text("network").notNull(),
+    address: text("address").notNull(),
+    // Int64 nonce as its exact decimal string.
+    nonce: text("nonce").notNull(),
+    // u32 on the wire; bigint so no value can overflow a signed int4.
+    expirationLedger: bigint("expiration_ledger", { mode: "number" }).notNull(),
+    reservedAt: timestamp("reserved_at", { withTimezone: true, mode: "date" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.network, table.address, table.nonce] }),
+    index("submission_replay_expiration_idx").on(table.network, table.expirationLedger),
+  ],
 );
 
 // Transaction submission queue for exactly-once processing (Issue #291).

@@ -1,5 +1,5 @@
 # Prometheus alerting rules for Dead-Letter Queue monitoring
-# 
+#
 # Include this file in your Prometheus configuration:
 #   rule_files:
 #     - '/path/to/dlq-alerts.yaml'

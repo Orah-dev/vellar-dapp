@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import {
   Account,
@@ -10,18 +9,21 @@ import {
   nativeToScVal,
   xdr,
 } from "@stellar/stellar-sdk";
+import { publisherIdFor } from "@vellar/service-kit";
 import {
   ATTESTATION_REGISTRY_ID,
   DEFAULT_WINDOW_SECONDS,
+  generatePolicy,
   policyHash,
   SPENDING_POLICY_WASM_HASH,
+  TOKEN_SPENDING_POLICY_WASM_HASH,
   validateDefinition,
   VERIFIED_RECIPIENT_WASM_HASH,
   xlmToStroops,
 } from "./templates";
 import type { PolicyDeployer } from "./deploy";
 import { DEPLOY_FEE, PolicyDeployError } from "./deploy";
-import { buildServer, createMemoryPolicyRepository } from "./server";
+import { buildServer, createMemoryPolicyRepository, type PolicyRecord, type PolicyRepository } from "./server";
 
 const G1 = "GCMCEGOUVALP2H6LTY7IPUUMSFKDQUMK3SDU5DI7LETNEZZKHRIIALKM";
 const G2 = "GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL3";
@@ -150,12 +152,22 @@ describe("validateDefinition", () => {
     ],
     [
       "all zeroes decimal spending limit",
-      { version: "1", type: "spending_limit", owners: [C1], spendingLimits: { dailyXlm: "0.0000000" } },
+      {
+        version: "1",
+        type: "spending_limit",
+        owners: [C1],
+        spendingLimits: { dailyXlm: "0.0000000" },
+      },
       /at least 1 stroop/,
     ],
     [
       "sub-stroop precision exceeding 7 decimal places",
-      { version: "1", type: "spending_limit", owners: [C1], spendingLimits: { dailyXlm: "0.00000001" } },
+      {
+        version: "1",
+        type: "spending_limit",
+        owners: [C1],
+        spendingLimits: { dailyXlm: "0.00000001" },
+      },
       /at most 7 decimal places/,
     ],
     [
@@ -165,12 +177,22 @@ describe("validateDefinition", () => {
     ],
     [
       "non-numeric spending limit",
-      { version: "1", type: "spending_limit", owners: [C1], spendingLimits: { dailyXlm: "invalid" } },
+      {
+        version: "1",
+        type: "spending_limit",
+        owners: [C1],
+        spendingLimits: { dailyXlm: "invalid" },
+      },
       /valid decimal amount/,
     ],
     [
       "perTxXlm exceeds dailyXlm",
-      { version: "1", type: "spending_limit", owners: [C1], spendingLimits: { dailyXlm: "50", perTxXlm: "100" } },
+      {
+        version: "1",
+        type: "spending_limit",
+        owners: [C1],
+        spendingLimits: { dailyXlm: "50", perTxXlm: "100" },
+      },
       /perTxXlm cannot exceed dailyXlm/,
     ],
     [
@@ -195,12 +217,22 @@ describe("validateDefinition", () => {
     ],
     [
       "timelock exceeding 365 days",
-      { version: "1", type: "timelock", owners: [C1], timelocks: { adminActionDelaySeconds: 31_536_001 } },
+      {
+        version: "1",
+        type: "timelock",
+        owners: [C1],
+        timelocks: { adminActionDelaySeconds: 31_536_001 },
+      },
       /delay cannot exceed 31,536,000 seconds/,
     ],
     [
       "timelock with decimal delay",
-      { version: "1", type: "timelock", owners: [C1], timelocks: { adminActionDelaySeconds: 3600.5 } },
+      {
+        version: "1",
+        type: "timelock",
+        owners: [C1],
+        timelocks: { adminActionDelaySeconds: 3600.5 },
+      },
       /delay must be an integer/,
     ],
     [
@@ -238,7 +270,7 @@ describe("Policy API", () => {
       kind: "policy-contract",
       wasmHash: SPENDING_POLICY_WASM_HASH,
     });
-    expect(res.json()).toHaveLength(6);
+    expect(res.json()).toHaveLength(7);
   });
 
   it("generate → review artifacts → GET → deploy records the deployment", async () => {
@@ -288,7 +320,7 @@ describe("Policy API", () => {
 
   it("emits a policy.deployed analytics event on successful deployment (issue #347)", async () => {
     const server = build();
-    
+
     // Generate a spending policy
     const generated = await server.inject({
       method: "POST",
@@ -303,7 +335,7 @@ describe("Policy API", () => {
       url: "/policies/deploy",
       payload: { policyId: policy.id, txHash: "abc123", contractId: C1 },
     });
-    
+
     expect(deployed.statusCode).toBe(200);
     expect(deployed.json().policy.status).toBe("deployed");
     // The analytics event is emitted via logEvent (verified by log mocking in integration).
@@ -312,14 +344,14 @@ describe("Policy API", () => {
 
   it("does NOT emit policy.deployed when deployment fails", async () => {
     const server = build();
-    
+
     // Try to deploy a non-existent policy — should 404
     const deployed = await server.inject({
       method: "POST",
       url: "/policies/deploy",
       payload: { policyId: "nope", txHash: "abc123", contractId: C1 },
     });
-    
+
     expect(deployed.statusCode).toBe(404);
     // No event emitted on failure
   });
@@ -334,6 +366,156 @@ describe("Policy API", () => {
     expect(deploy.statusCode).toBe(404);
     const get = await server.inject({ url: "/policies/nope" });
     expect(get.statusCode).toBe(404);
+  });
+});
+
+describe("GET /policies (issue #257)", () => {
+  function minimalRecord(overrides: Partial<PolicyRecord>): PolicyRecord {
+    return {
+      id: overrides.id ?? "id",
+      createdAt: overrides.createdAt ?? new Date().toISOString(),
+      status: overrides.status ?? "generated",
+      definition: spendingPolicy,
+      policyHash: "hash",
+      manifest: {
+        template: "spending_limit",
+        network: "testnet",
+        enforcement: { kind: "policy-contract", wasmHash: SPENDING_POLICY_WASM_HASH },
+      },
+      ...overrides,
+    };
+  }
+
+  async function seed(policies: PolicyRepository, records: PolicyRecord[]) {
+    for (const r of records) await policies.insert(r);
+  }
+
+  it("filters by status", async () => {
+    const policies = createMemoryPolicyRepository();
+    await seed(policies, [
+      minimalRecord({ id: "p1", status: "generated", createdAt: "2024-01-01T00:00:00.000Z" }),
+      minimalRecord({ id: "p2", status: "deployed", createdAt: "2024-01-02T00:00:00.000Z" }),
+      minimalRecord({ id: "p3", status: "instance_deployed", createdAt: "2024-01-03T00:00:00.000Z" }),
+    ]);
+    app = buildServer({ policies });
+    const res = await app.inject({ url: "/policies?status=deployed" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().policies.map((p: PolicyRecord) => p.id)).toEqual(["p2"]);
+  });
+
+  it("rejects an unknown status value with 400 (issue #257's own example values do not exist in this codebase)", async () => {
+    app = buildServer({ policies: createMemoryPolicyRepository() });
+    const res = await app.inject({ url: "/policies?status=active" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_status");
+  });
+
+  it("filters by created_after and created_before (inclusive range)", async () => {
+    const policies = createMemoryPolicyRepository();
+    await seed(policies, [
+      minimalRecord({ id: "p1", createdAt: "2024-01-01T00:00:00.000Z" }),
+      minimalRecord({ id: "p2", createdAt: "2024-01-15T00:00:00.000Z" }),
+      minimalRecord({ id: "p3", createdAt: "2024-02-01T00:00:00.000Z" }),
+    ]);
+    app = buildServer({ policies });
+    const res = await app.inject({
+      url: "/policies?created_after=2024-01-10T00:00:00.000Z&created_before=2024-01-20T00:00:00.000Z",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().policies.map((p: PolicyRecord) => p.id)).toEqual(["p2"]);
+  });
+
+  it("rejects a malformed created_after with 400, not a silent no-op filter", async () => {
+    app = buildServer({ policies: createMemoryPolicyRepository() });
+    const res = await app.inject({ url: "/policies?created_after=not-a-date" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_created_after");
+  });
+
+  it("rejects created_after later than created_before with 400", async () => {
+    app = buildServer({ policies: createMemoryPolicyRepository() });
+    const res = await app.inject({
+      url: "/policies?created_after=2024-02-01T00:00:00.000Z&created_before=2024-01-01T00:00:00.000Z",
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_date_range");
+  });
+
+  it("combines status and date-range filters", async () => {
+    const policies = createMemoryPolicyRepository();
+    await seed(policies, [
+      minimalRecord({ id: "p1", status: "deployed", createdAt: "2024-01-05T00:00:00.000Z" }),
+      minimalRecord({ id: "p2", status: "generated", createdAt: "2024-01-05T00:00:00.000Z" }),
+      minimalRecord({ id: "p3", status: "deployed", createdAt: "2024-03-01T00:00:00.000Z" }),
+    ]);
+    app = buildServer({ policies });
+    const res = await app.inject({
+      url: "/policies?status=deployed&created_after=2024-01-01T00:00:00.000Z&created_before=2024-02-01T00:00:00.000Z",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().policies.map((p: PolicyRecord) => p.id)).toEqual(["p1"]);
+  });
+
+  it("paginates newest-first with no skip or duplicate across pages", async () => {
+    const policies = createMemoryPolicyRepository();
+    await seed(
+      policies,
+      Array.from({ length: 5 }, (_, i) =>
+        minimalRecord({ id: `p${i}`, createdAt: `2024-01-0${i + 1}T00:00:00.000Z` }),
+      ),
+    );
+    app = buildServer({ policies });
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const url = cursor ? `/policies?limit=2&cursor=${encodeURIComponent(cursor)}` : "/policies?limit=2";
+      const res = await app.inject({ url });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.policies.length).toBeLessThanOrEqual(2);
+      for (const p of body.policies) seen.push(p.id);
+      if (!body.hasMore) {
+        expect(body.nextCursor).toBeNull();
+        break;
+      }
+      expect(body.nextCursor).toBeTruthy();
+      cursor = body.nextCursor;
+    }
+    expect(seen).toEqual(["p4", "p3", "p2", "p1", "p0"]);
+  });
+
+  it("returns an empty page (not an error) when nothing matches", async () => {
+    app = buildServer({ policies: createMemoryPolicyRepository() });
+    const res = await app.inject({ url: "/policies" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ policies: [], hasMore: false, nextCursor: null });
+  });
+
+  it("rejects a malformed cursor with 400, not 500", async () => {
+    app = buildServer({ policies: createMemoryPolicyRepository() });
+    const res = await app.inject({ url: "/policies?cursor=not-a-real-cursor" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_cursor");
+  });
+
+  it("rejects a non-positive-integer limit with 400", async () => {
+    app = buildServer({ policies: createMemoryPolicyRepository() });
+    const res = await app.inject({ url: "/policies?limit=0" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_limit");
+  });
+
+  it("caps an oversized limit rather than trusting the caller", async () => {
+    const policies = createMemoryPolicyRepository();
+    await seed(
+      policies,
+      Array.from({ length: 3 }, (_, i) => minimalRecord({ id: `p${i}`, createdAt: `2024-01-0${i + 1}T00:00:00.000Z` })),
+    );
+    app = buildServer({ policies });
+    const res = await app.inject({ url: "/policies?limit=999999" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().policies).toHaveLength(3);
   });
 });
 
@@ -514,6 +696,7 @@ describe("POST /policies/:id/deploy-instance", () => {
     expect(policy.manifest.enforcement.wasmHash).toBe(VERIFIED_RECIPIENT_WASM_HASH);
     expect(policy.manifest.enforcement.constructorArgs).toEqual({
       registry: ATTESTATION_REGISTRY_ID,
+      mode: "strict",
     });
 
     const res = await server.inject({
@@ -524,7 +707,7 @@ describe("POST /policies/:id/deploy-instance", () => {
     expect(res.statusCode).toBe(200);
     expect(deployInstance).toHaveBeenCalledWith({
       wallet: C1,
-      constructorArgs: { registry: ATTESTATION_REGISTRY_ID },
+      constructorArgs: { registry: ATTESTATION_REGISTRY_ID, mode: "strict" },
     });
   });
 
@@ -849,3 +1032,233 @@ describe("CSRF protection for admin endpoints (Issue #311)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// #399 safety rules · #394 token budget · #398 provenance modes
+
+const C2 = "CBZVS2ETJKCIMRRWUHTZFVMWDACJNYUZ54JIXUJCHXNBFNXELKTSWHGP";
+const C3 = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
+describe("spending_limit safety rules (#399)", () => {
+  const withRules = (safetyRules: unknown) => ({ ...spendingPolicy, safetyRules });
+
+  it("accepts per-token single-transfer caps and a token allowlist, in base units", () => {
+    expect(
+      validateDefinition(
+        withRules({
+          maxSingleTransfer: [{ token: C2, amountBaseUnits: "1000000000" }],
+          allowedTokens: [C2, C3],
+        }),
+      ),
+    ).toEqual({ valid: true, errors: [] });
+  });
+
+  it.each([
+    [
+      "fiat / decimal amounts",
+      { maxSingleTransfer: [{ token: C2, amountBaseUnits: "10.5" }] },
+      /whole number of base units/,
+    ],
+    [
+      "zero cap",
+      { maxSingleTransfer: [{ token: C2, amountBaseUnits: "0" }] },
+      /at least 1 base unit/,
+    ],
+    ["non-contract token", { allowedTokens: [G1] }, /contract address/],
+    ["empty allowlist", { allowedTokens: [] }, /at least one token/],
+    ["duplicate allowlist", { allowedTokens: [C2, C2] }, /duplicate/],
+    [
+      "more caps than the contract bound",
+      {
+        maxSingleTransfer: Array.from({ length: 9 }, (_, i) => ({
+          token: C2.slice(0, -1) + "ABCDEFGHJ"[i],
+          amountBaseUnits: "1",
+        })),
+      },
+      /at most 8/,
+    ],
+    ["unknown rule keys", { usdCap: "100" }, /unrecognized|Unrecognized|unknown/i],
+  ])("rejects %s", (_name, safetyRules, pattern) => {
+    const result = validateDefinition(withRules(safetyRules));
+    expect(result.valid).toBe(false);
+    expect(result.errors.join("\n")).toMatch(pattern);
+  });
+
+  it("generate bakes the rules into the constructor args; no rules → no rules field", () => {
+    const ruled = generatePolicy(
+      withRules({
+        maxSingleTransfer: [{ token: C2, amountBaseUnits: "50000000" }],
+        allowedTokens: [C2],
+      }) as never,
+      "testnet",
+    );
+    expect(ruled.manifest.enforcement).toEqual({
+      kind: "policy-contract",
+      wasmHash: SPENDING_POLICY_WASM_HASH,
+      constructorArgs: {
+        dailyLimitStroops: xlmToStroops("100").toString(),
+        windowSeconds: DEFAULT_WINDOW_SECONDS,
+        rules: {
+          maxSingleTransfer: [{ token: C2, amountBaseUnits: "50000000" }],
+          allowedTokens: [C2],
+        },
+      },
+    });
+    const plain = generatePolicy(spendingPolicy as never, "testnet");
+    expect(plain.manifest.enforcement).toEqual({
+      kind: "policy-contract",
+      wasmHash: SPENDING_POLICY_WASM_HASH,
+      constructorArgs: {
+        dailyLimitStroops: xlmToStroops("100").toString(),
+        windowSeconds: DEFAULT_WINDOW_SECONDS,
+      },
+    });
+  });
+});
+
+describe("token_spending_limit (#394 agent budget)", () => {
+  const budget = (tokenBudget: unknown) => ({
+    version: "1",
+    type: "token_spending_limit",
+    owners: [C1],
+    tokenBudget,
+  });
+
+  it("validates a token-scoped budget in base units", () => {
+    expect(validateDefinition(budget({ token: C2, amountBaseUnits: "100000000" }))).toEqual({
+      valid: true,
+      errors: [],
+    });
+    expect(
+      validateDefinition(budget({ token: C2, amountBaseUnits: "1", windowSeconds: 3600 })),
+    ).toEqual({ valid: true, errors: [] });
+  });
+
+  it.each([
+    ["missing budget", undefined, /tokenBudget/],
+    ["decimal amount", { token: C2, amountBaseUnits: "1.5" }, /whole number/],
+    [
+      "window over a year",
+      { token: C2, amountBaseUnits: "1", windowSeconds: 31_536_001 },
+      /365 days/,
+    ],
+    ["G-account token", { token: G1, amountBaseUnits: "1" }, /contract address/],
+  ])("rejects %s", (_name, tokenBudget, pattern) => {
+    const result = validateDefinition(budget(tokenBudget));
+    expect(result.valid).toBe(false);
+    expect(result.errors.join("\n")).toMatch(pattern);
+  });
+
+  it("generate → deploy-instance passes (wallet, token, limit, window) to the deployer", async () => {
+    const { deployer, deployInstance } = stubDeployer();
+    const server = build(deployer);
+    const gen = await server.inject({
+      method: "POST",
+      url: "/policies/generate",
+      payload: {
+        definition: budget({ token: C2, amountBaseUnits: "100000000" }),
+        network: "testnet",
+      },
+    });
+    expect(gen.statusCode).toBe(201);
+    const policy = gen.json().policy as { id: string; manifest: { enforcement: unknown } };
+    expect(policy.manifest.enforcement).toEqual({
+      kind: "policy-contract",
+      wasmHash: TOKEN_SPENDING_POLICY_WASM_HASH,
+      constructorArgs: {
+        token: C2,
+        dailyLimitBaseUnits: "100000000",
+        windowSeconds: DEFAULT_WINDOW_SECONDS,
+      },
+    });
+    const res = await server.inject({
+      method: "POST",
+      url: `/policies/${policy.id}/deploy-instance`,
+      payload: { wallet: C1 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(deployInstance).toHaveBeenCalledWith({
+      wallet: C1,
+      constructorArgs: {
+        token: C2,
+        dailyLimitBaseUnits: "100000000",
+        windowSeconds: DEFAULT_WINDOW_SECONDS,
+      },
+    });
+  });
+});
+
+describe("verified_only provenance modes (#398)", () => {
+  const verified = (provenance?: unknown) => ({
+    version: "1",
+    type: "verified_only",
+    owners: [C1],
+    ...(provenance === undefined ? {} : { provenance }),
+  });
+
+  it("defaults to strict and accepts an explicit strict mode", () => {
+    expect(validateDefinition(verified())).toEqual({ valid: true, errors: [] });
+    expect(validateDefinition(verified({ mode: "strict" }))).toEqual({ valid: true, errors: [] });
+    expect(generatePolicy(verified() as never, "testnet").manifest.enforcement).toEqual({
+      kind: "policy-contract",
+      wasmHash: VERIFIED_RECIPIENT_WASM_HASH,
+      constructorArgs: { registry: ATTESTATION_REGISTRY_ID, mode: "strict" },
+    });
+  });
+
+  it("trusted publishers: canonicalizes + hashes the publisher set (a publisher set, not a hash list)", () => {
+    const def = verified({
+      mode: "trusted_publishers",
+      trustedPublishers: [
+        "https://github.com/Vellar-Wallet/vellar-dapp",
+        "github.com/vellar-wallet",
+        "gitlab.com/acme",
+      ],
+    });
+    expect(validateDefinition(def)).toEqual({ valid: true, errors: [] });
+    const args = generatePolicy(def as never, "testnet").manifest.enforcement;
+    expect(args).toEqual({
+      kind: "policy-contract",
+      wasmHash: VERIFIED_RECIPIENT_WASM_HASH,
+      constructorArgs: {
+        registry: ATTESTATION_REGISTRY_ID,
+        mode: "trusted_publishers",
+        // The two github spellings collapse to ONE publisher id.
+        trustedPublisherIds: [
+          publisherIdFor("github.com/vellar-wallet"),
+          publisherIdFor("gitlab.com/acme"),
+        ],
+      },
+    });
+  });
+
+  it.each([
+    [
+      "trusted mode with no publishers",
+      { mode: "trusted_publishers", trustedPublishers: [] },
+      /at least one publisher/,
+    ],
+    [
+      "unattributable publisher",
+      { mode: "trusted_publishers", trustedPublishers: ["https://github.com/"] },
+      /host and owner/,
+    ],
+    ["unknown mode", { mode: "warn" }, /mode/],
+    [
+      "publishers on strict",
+      { mode: "strict", trustedPublishers: ["github.com/a"] },
+      /unrecognized|Unrecognized/i,
+    ],
+  ])("rejects %s", (_name, provenance, pattern) => {
+    const result = validateDefinition(verified(provenance));
+    expect(result.valid).toBe(false);
+    expect(result.errors.join("\n")).toMatch(pattern);
+  });
+
+  it("template copy says provenance, never safety", async () => {
+    const server = build();
+    const res = await server.inject({ url: "/policies/templates" });
+    const t = res.json().find((x: { type: string }) => x.type === "verified_only");
+    expect(`${t.title} ${t.description}`).toMatch(/provenance/i);
+    expect(`${t.title} ${t.description}`).not.toMatch(/\b(is|means|are) safe\b/i);
+  });
+});
