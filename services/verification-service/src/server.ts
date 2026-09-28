@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
-import { registerHealth, registerMetrics, publicBaseUrlFromEnv } from "@vellar/service-kit";
+import { registerHealth, registerMetrics, publicBaseUrlFromEnv, registerTracing } from "@vellar/service-kit";
 import type { VerificationRecord } from "@vellar/types";
 import { paymentMiddleware, x402ResourceServer } from "@x402/fastify";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
@@ -30,6 +30,11 @@ export interface VerificationRecordInternal extends VerificationRecord {
   sourceArchiveRef?: string;
   /** Optional lockfile digest, part of the deterministic-build inputs (idea.md §6.3). */
   lockfileHash?: string;
+  /** Trace context of the submitting request (#301). Stored on the row so the
+   * worker — which claims rows, not HTTP requests — continues the same trace.
+   * Internal only: toPublic strips it. */
+  traceId?: string;
+  traceParentSpanId?: string;
   /** PRIVATE full build/clone output (operators only). Populated by the worker.
    * NEVER returned by the public API — toPublic strips it (security-audit.md
    * H3/FIX 6): it may carry clone stderr, host paths, and resolved IPs. */
@@ -166,6 +171,9 @@ export interface BuildJob {
   sourceArchiveRef?: string;
   toolchainVersion: string;
   buildFlags?: string[];
+  /** Trace context carried to the worker (#301). */
+  traceId?: string;
+  traceParentSpanId?: string;
 }
 
 /** Where submitted jobs go. In-process for tests/dev; a real queue (or a shared
@@ -313,6 +321,7 @@ export function buildServer(deps: VerificationServiceDeps = {}): FastifyInstance
   const maxActiveQueue = deps.maxActiveQueue ?? 1000;
 
   const app = Fastify({ logger: true });
+  registerTracing(app, "verification-service");
   registerHealth(app, "verification-service");
   registerMetrics(app, "verification-service");
 
@@ -353,6 +362,8 @@ export function buildServer(deps: VerificationServiceDeps = {}): FastifyInstance
       toolchainVersion: input.toolchainVersion,
       buildFlags: input.buildFlags,
       lockfileHash: input.lockfileHash,
+      traceId: request.traceContext?.traceId,
+      traceParentSpanId: request.traceContext?.spanId,
       status: "submitted",
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -371,6 +382,8 @@ export function buildServer(deps: VerificationServiceDeps = {}): FastifyInstance
         sourceArchiveRef: record.sourceArchiveRef,
         toolchainVersion: record.toolchainVersion,
         buildFlags: record.buildFlags,
+        traceId: record.traceId,
+        traceParentSpanId: record.traceParentSpanId,
       });
     } catch (err) {
       request.log.error({ err, recordId: record.id }, "failed to enqueue build job");
@@ -512,6 +525,13 @@ export function toPublic(
 ): VerificationRecord & { statusDetail?: string } {
   // Strip the internal fields AND the private `log` (H3/FIX 6): only the
   // sanitized statusDetail is safe to return unauthenticated.
-  const { sourceArchiveRef: _ref, lockfileHash: _lock, log: _log, ...pub } = record;
+  const {
+    sourceArchiveRef: _ref,
+    lockfileHash: _lock,
+    log: _log,
+    traceId: _traceId,
+    traceParentSpanId: _traceParent,
+    ...pub
+  } = record;
   return pub;
 }

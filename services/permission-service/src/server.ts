@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
-import { registerHealth, registerMetrics } from "@vellar/service-kit";
+import { registerHealth, registerMetrics, registerTracing } from "@vellar/service-kit";
 
 export interface PermissionServiceDeps {
   isReady?: () => boolean | Promise<boolean>;
@@ -24,6 +24,8 @@ export function buildPermissionServer(deps: PermissionServiceDeps = {}): Fastify
     }
     return true;
   };
+
+  registerTracing(app, "permission-service");
 
   registerHealth(app, "permission-service", { isReady });
   registerMetrics(app, "permission-service");

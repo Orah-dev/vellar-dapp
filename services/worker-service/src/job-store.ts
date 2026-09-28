@@ -14,6 +14,10 @@ export interface ClaimedJob extends VerificationJobInput {
   submittedAtMs?: number;
   /** Cross-service correlation ID for end-to-end tracing (Issue #299). */
   correlationId?: string;
+  /** Trace context of the submitting request (#301), stored on the record by
+   * verification-service so the build span joins the submitter's trace. */
+  traceId?: string;
+  traceParentSpanId?: string;
 }
 
 export interface ReapResult {

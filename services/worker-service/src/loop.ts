@@ -71,12 +71,16 @@ export async function runWorkerTick(deps: WorkerDeps): Promise<number> {
       }
 
       const retryAttempt = (job as unknown as { retryAttempt?: number }).retryAttempt;
+      // Continue the submitter's trace (#301): the record carries the traceId
+      // and the verification-service span it was submitted under. Rows without
+      // one (pre-#301, or seeded directly) start a fresh trace.
       const traceCtx = extractTraceContext({
-        "x-trace-id": (job as unknown as { traceId?: string }).traceId,
+        "x-trace-id": job.traceId,
+        "x-span-id": job.traceParentSpanId,
       });
       const outcome = await withTraceSpan(
         "worker-service",
-        "policy.execute",
+        "verification.execute",
         traceCtx,
         async () => {
           return await runVerification(job, {
@@ -91,7 +95,9 @@ export async function runWorkerTick(deps: WorkerDeps): Promise<number> {
       const turnaround =
         job.submittedAtMs !== undefined ? (Date.now() - job.submittedAtMs) / 1000 : undefined;
       metrics.verificationResult(outcome.status, turnaround);
-      const corrTag = job.correlationId ? ` [correlationId=${job.correlationId}]` : "";
+      const corrTag =
+        (job.correlationId ? ` [correlationId=${job.correlationId}]` : "") +
+        (job.traceId ? ` [traceId=${job.traceId}]` : "");
       log.info(`verification ${job.recordId} → ${outcome.status} (${job.contractId})${corrTag}`);
       // Mirror the outcome on-chain (best-effort; never throws).
       if (deps.attestor) {
@@ -101,7 +107,9 @@ export async function runWorkerTick(deps: WorkerDeps): Promise<number> {
       // runVerification only throws on truly unexpected errors; leave the record
       // "building" so it can be retried, and keep processing the batch.
       metrics.workerFailure();
-      const corrTag = job.correlationId ? ` [correlationId=${job.correlationId}]` : "";
+      const corrTag =
+        (job.correlationId ? ` [correlationId=${job.correlationId}]` : "") +
+        (job.traceId ? ` [traceId=${job.traceId}]` : "");
       log.error(`verification ${job.recordId} errored unexpectedly${corrTag}`, err);
     }
   };
