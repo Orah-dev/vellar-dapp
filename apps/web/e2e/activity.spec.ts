@@ -75,10 +75,29 @@ test("dashboard activity shows a real on-chain transfer with its asset (live tes
     page.getByRole("list", { name: /transaction history/i }).getByRole("listitem").first(),
   ).toBeVisible({ timeout: 90_000 });
 
+  // --- Rows never repeat --------------------------------------------------
+  // "Load older" must walk backwards without re-serving a row: the L6 defect
+  // class (a cursor that repeats or skips rows is worse than no pagination).
+  const rowTexts = await history.getByRole("listitem").allInnerTexts();
+  expect(new Set(rowTexts).size).toBe(rowTexts.length);
+
   // --- Pagination control is present once there is more than one page -------
   // With a single funding transfer the wallet has too little history to page,
   // so only assert the control is coherent in whichever state it renders.
   const loadOlder = page.getByRole("button", { name: /load older/i });
   const endOfHistory = page.getByText(/end of history/i);
   await expect(loadOlder.or(endOfHistory).first()).toBeVisible({ timeout: 30_000 });
+
+  // If there is an older window, loading it must not repeat what is already
+  // on screen — the invariant the live integration test pins, checked here
+  // through the real panel.
+  if (await loadOlder.isVisible().catch(() => false)) {
+    const before = await history.getByRole("listitem").allInnerTexts();
+    await loadOlder.click();
+    await page.waitForTimeout(5_000);
+    const after = await history.getByRole("listitem").allInnerTexts();
+    expect(after.length).toBeGreaterThanOrEqual(before.length);
+    // No row appears twice in the merged list.
+    expect(new Set(after).size).toBe(after.length);
+  }
 });
