@@ -1,6 +1,8 @@
 import { xdr, scValToNative } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
 import {
+  buildClassicRail,
+  buildSorobanRail,
   classicOpToRow,
   contractIdOf,
   decimalToRaw,
@@ -533,5 +535,108 @@ describe("mapTransientRpcError", () => {
   it("passes unknown errors through untouched", () => {
     const err = new Error("unexpected");
     expect(mapTransientRpcError(err)).toBe(err);
+  });
+});
+
+describe("buildSorobanRail", () => {
+  // The rail is fed a whole ledger window in the order getEvents returned it:
+  // ASCENDING, oldest first, newest last. Rendering newest-first means
+  // reversing, and NOTHING may be trimmed off the tail — the client resumes
+  // from the window's oldest ledger, so a trimmed row would have no way to
+  // reach the next page. Both were real defects; these pin the fix.
+  const assetOf = (id: string) =>
+    id === USDC_CONTRACT ? USDC_ASSET : id === XLM_CONTRACT ? XLM_ASSET : undefined;
+
+  it("reverses the ascending stream so the newest transfer is first", () => {
+    const events = [
+      liveEvent(USDC_EVENT, { id: "ev-1", ledger: 10 }),
+      liveEvent(XLM_EVENT, { id: "ev-2", ledger: 11 }),
+    ];
+    const rows = buildSorobanRail({ accountId: ACCOUNT, events, assetOf, decoder: decode });
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.id)).toEqual([
+      `soroban:${XLM_CONTRACT}:ev-2`,
+      `soroban:${USDC_CONTRACT}:ev-1`,
+    ]);
+  });
+
+  it("keeps every transfer in the window, even well past a page size", () => {
+    // No pageSize is passed at all: the builder must not trim. Trimming was
+    // what made trimmed rows unreachable on the next page.
+    const events = Array.from({ length: 250 }, (_, i) =>
+      liveEvent(USDC_EVENT, { id: `ev-${i}`, ledger: 100 + i }),
+    );
+    const rows = buildSorobanRail({ accountId: ACCOUNT, events, assetOf, decoder: decode });
+
+    expect(rows).toHaveLength(250);
+    expect(rows[0]?.id).toBe(`soroban:${USDC_CONTRACT}:ev-249`);
+    expect(rows.at(-1)?.id).toBe(`soroban:${USDC_CONTRACT}:ev-0`);
+  });
+
+  it("drops non-transfer events and unresolvable assets, never rendering a bare amount", () => {
+    const events = [
+      liveEvent(USDC_EVENT, { id: "keep", ledger: 10 }),
+      // A `fee` event: right contract, wrong topic count.
+      liveEvent(USDC_EVENT, { id: "fee", ledger: 11, topic: [USDC_EVENT.topicBase64[0]] }),
+      // A transfer from a contract whose metadata cannot be resolved.
+      liveEvent(XLM_EVENT, { id: "unknown-asset", ledger: 12 }),
+    ];
+    const rows = buildSorobanRail({
+      accountId: ACCOUNT,
+      events,
+      assetOf: () => undefined,
+      decoder: decode,
+    });
+    expect(rows).toEqual([]);
+
+    // With assets resolved the two real transfers survive; the `fee` event
+    // is still excluded, because it carries only one topic.
+    const kept = buildSorobanRail({
+      accountId: ACCOUNT,
+      events,
+      assetOf,
+      decoder: decode,
+    });
+    expect(kept.map((r) => r.id)).toEqual([
+      `soroban:${XLM_CONTRACT}:unknown-asset`,
+      `soroban:${USDC_CONTRACT}:keep`,
+    ]);
+  });
+
+  it("returns nothing for an empty window rather than throwing", () => {
+    expect(buildSorobanRail({ accountId: ACCOUNT, events: [], assetOf, decoder: decode })).toEqual(
+      [],
+    );
+  });
+});
+
+describe("buildClassicRail", () => {
+  // Horizon is queried order("desc"), so ops arrive newest-first and the rail
+  // CAN express a lossless resume point — which is why this rail still trims
+  // and the Soroban rail does not.
+  it("keeps a full page and reports no resume when nothing was trimmed", () => {
+    const ops = Array.from({ length: 3 }, (_, i) =>
+      classicPayment({ id: `op-${i}`, paging_token: `token-${i}` }),
+    );
+    const page = buildClassicRail({ accountId: ACCOUNT, ops, pageSize: 5 });
+
+    expect(page.rows).toHaveLength(3);
+    expect(page.resume).toBeUndefined();
+  });
+
+  it("resumes at the paging token of the last EMITTED row, not the last record", () => {
+    // op-1 is not a payment, so classicOpToRow drops it. Resuming at its token
+    // would silently skip the payment that follows it.
+    const ops = [
+      classicPayment({ id: "op-0", paging_token: "token-0" }),
+      classicPayment({ id: "op-1", paging_token: "token-1", type: "create_account" }),
+      classicPayment({ id: "op-2", paging_token: "token-2" }),
+      classicPayment({ id: "op-3", paging_token: "token-3" }),
+    ];
+    const page = buildClassicRail({ accountId: ACCOUNT, ops, pageSize: 2 });
+
+    expect(page.rows.map((r) => r.id)).toEqual(["classic:op-0", "classic:op-2"]);
+    expect(page.resume).toBe("token-2");
   });
 });

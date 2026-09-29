@@ -11,6 +11,7 @@ import { getAnalyticsTracker, walletCreationEvents } from "@/lib/analytics";
 import { ReceiveCard } from "./receive-card";
 import { SendPayment } from "./send-payment";
 import { SwapPanel } from "./swap-panel";
+import { ActivityPanel } from "./activity";
 
 // Wallet dashboard ("paper & signals" shell, design.md §8): panel grid —
 // Account overview (balance + details) · My assets · Activity. Send/Receive
@@ -154,6 +155,27 @@ export default function Dashboard() {
                 />
                 <DetailRow label="Network" value={session?.network ?? ""} />
                 <DetailRow label="Auth method" value="Passkey" />
+                {session?.createdAt && (
+                  <DetailRow
+                    label="Wallet since"
+                    value={new Date(session.createdAt).toLocaleDateString(undefined, {
+                      year: "numeric",
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  />
+                )}
+                {session?.lastActiveAt && (
+                  <DetailRow
+                    label="Last active"
+                    value={new Date(session.lastActiveAt).toLocaleString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  />
+                )}
               </dl>
             </section>
           </Frame>

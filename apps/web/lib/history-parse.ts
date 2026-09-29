@@ -382,13 +382,97 @@ export interface MergeInput {
   decoder: ScValDecoder;
 }
 
+// --- Per-rail paging ----------------------------------------------------------
+//
+// WHY NOT ONE MERGED SORT. The obvious shape — merge both rails, sort by
+// timestamp, slice to pageSize — is subtly wrong, and the defect is invisible
+// until it is read closely.
+//
+// getEvents returns events in ASCENDING order and its cursor walks FORWARD
+// toward the chain head; there is no "latest N" mode and `order: "desc"` was
+// verified to be ignored. So a forward cursor cannot serve a newest-first page
+// from the tail of a stream without stranding everything before it. Worse,
+// `ledgerClosedAt` does not always order events the way the stream does:
+// verified live, a scanned window interleaved ledgers 920976 and 920988 such
+// that the 920988 row sorted NEWEST while sitting at the END of the stream.
+// Taking "the oldest emitted row by timestamp" as a resume point then skipped
+// the rest of 920976 and re-read 920988 from its start — re-emitting a row the
+// first page had already shown. That is exactly the "re-serving the same page"
+// defect class, and it reproduced intermittently because it depends on where a
+// ledger boundary happens to fall inside a scan.
+//
+// So each rail is paged on its own terms: the Soroban rail reverses its
+// ascending stream (newest first) and never trims, because the caller resumes
+// from the window's oldest ledger and would otherwise have no way to reach a
+// trimmed row; the classic rail trims against Horizon's own newest-first
+// cursor, which can express the resume point. Only the final display order is a
+// timestamp sort.
+
+export interface RailPage {
+  /** Newest-first rows for this rail, at most `pageSize` of them. */
+  rows: HistoryTx[];
+  /** Cursor to resume this rail after; undefined when the rail is drained. */
+  resume: string | undefined;
+}
+
 /**
- * Merges both rails into one newest-first page (up to pageSize rows). Rows
- * beyond pageSize stay unparsed here — the caller keeps both rail cursors and
- * re-derives them on the next page, so trimming never loses data.
+ * Builds the Soroban rail for one page.
+ *
+ * `events` MUST be in the order getEvents returned them (ascending, oldest
+ * first) and MUST cover a complete ledger window — that is what makes this
+ * correct. The window's newest transfers are its LAST entries, so they are
+ * rendered by reversing the stream. Nothing is trimmed off the end, because a
+ * trimmed row would have no way to reach the next page: the cursor moves
+ * backwards by ledger, so every transfer in the window is either shown now or
+ * re-derived in the following window. `resume` is therefore never derived here;
+ * the caller resumes from the window's oldest ledger.
  */
-export function mergeHistoryPages(
-  input: MergeInput,
+export function buildSorobanRail(input: {
+  accountId: string;
+  events: RawEvent[];
+  assetOf: (contractId: string) => HistoryAsset | undefined;
+  decoder: ScValDecoder;
+}): HistoryTx[] {
+  const rows: HistoryTx[] = [];
+  for (const event of input.events) {
+    if (!isSACTransferEvent(event, input.decoder)) continue;
+    const asset = input.assetOf(contractIdOf(event));
+    if (!asset) continue;
+    const row = parseSACTransfer(input.accountId, event, asset, input.decoder);
+    if (row) rows.push(row);
+  }
+  // Ascending stream → newest first.
+  return rows.reverse();
+}
+
+/**
+ * Pages the classic rail. Horizon is queried `order("desc")`, so `ops` arrives
+ * newest-first and the resume point is the paging token of the last emitted
+ * operation. Operations that are not payments are dropped, which is why the
+ * token is taken from the last EMITTED row rather than the last record.
+ */
+export function buildClassicRail(input: {
+  accountId: string;
+  ops: ClassicOp[];
+  pageSize: number;
+}): RailPage {
+  const rows: HistoryTx[] = [];
+  for (const op of input.ops) {
+    const row = classicOpToRow(input.accountId, op);
+    if (row) rows.push(row);
+  }
+  if (rows.length <= input.pageSize) return { rows, resume: undefined };
+
+  const last = rows[input.pageSize - 1];
+  const lastOpId = last?.id.slice("classic:".length);
+  const resume = input.ops.find((o) => String(o.id) === lastOpId)?.paging_token;
+  return { rows: rows.slice(0, input.pageSize), resume };
+}/**
+ * Merges a page of rows from both rails into one newest-first list for display.
+ * Paging itself is per-rail (buildSorobanRail / buildClassicRail); this is only
+ * the ordering the UI renders.
+ */
+export function mergeHistoryPages(  input: MergeInput,
 ): { rows: HistoryTx[]; pageHasMore: boolean } {
   const rows: HistoryTx[] = [];
   for (const event of input.events) {

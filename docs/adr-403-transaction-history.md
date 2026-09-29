@@ -98,15 +98,54 @@ first page is clamped to the window reported by `getHealth()`, and that error
 string is in the retryable set alongside `txNoAccount` / `txBadSeq` /
 `MissingValue`.
 
-### 6. Paging and ordering
+### 6. Paging and ordering — why pages are ledger WINDOWS, not cursor pages
 
-`getEvents` cursor paging was verified to advance (ids `…-0000000000..0005` then
-`…-0000000006..0011`, no overlap). The `order` parameter is not part of the
-SDK's `GetEventsRequest` and was observed being ignored, so it is not sent; the
-**newest-first guarantee the UI relies on comes from `mergeHistoryPages`
-sorting the merged stream**, not from the RPC. Both rails' positions ride in a
-single opaque cursor so neither is re-scrolled from the top — the class of
-defect `docs/security-audit.md` L6 was closed for.
+Three behaviours were verified against the public testnet node, and together
+they rule out the obvious implementation.
+
+- **`order` does nothing.** It is not in the SDK's `GetEventsRequest`, and an
+  identical request carrying `order: "desc"` returned the same ascending page.
+  There is no "latest N events" mode.
+- **`startLedger` anchors the OLD end.** `getEvents({ startLedger })` returns
+  the oldest events at or after that ledger, ascending; its cursor walks
+  *forward* toward the chain head. Verified: a request for `latest - 1000`
+  came back entirely from ledger `latest - 1000`. An earlier draft started a
+  two-day lookback window there and paged forward — which labelled a panel
+  "newest first" while showing the **oldest** transfers of the window.
+- **The cursor is exclusive and equals the last event's id.** Resuming from a
+  mid-page event id returned the event immediately *after* it, with no overlap.
+- **`ledgerClosedAt` does not always agree with stream order.** A scanned window
+  interleaved ledgers 920976 and 920988 such that the 920988 row sorted newest
+  while sitting at the *end* of the stream.
+
+A forward cursor therefore cannot page a newest-first view: taking the tail of
+the stream strands everything before it, taking the head shows the oldest
+history, and deriving a resume point from `ledgerClosedAt` re-serves rows (the
+L6 defect class) whenever a ledger boundary lands inside a scan.
+
+**So each page reads an explicit ledger window** `[from, to]` and renders it
+newest-first by reversing the ascending stream. The first window ends at the
+chain head. "Load older" reads the window ending at the ledger immediately
+*before the oldest event the previous window actually consumed*, so windows are
+disjoint, progress is strictly backwards, and nothing is re-read or skipped.
+Carrying only the window's *start* was itself a defect — when the scan budget
+truncated a window, the next window overlapped the truncated remainder and
+re-served ~100 rows; the cursor therefore carries both bounds.
+
+Because a window cannot reach a trimmed row, the Soroban rail never trims: the
+window's transfers are all rendered, newest first. The classic rail does trim,
+because Horizon's `order("desc")` cursor *can* express a lossless resume point —
+and it resumes at the paging token of the last **emitted** row, not the last
+record, since non-payment operations are dropped.
+
+**Cost trade.** A busy window can hold more events than one page may fetch
+(`MAX_SCAN_PAGES × SCAN_PAGE_SIZE`). When the budget runs out the page shows
+slightly older history rather than making N sequential requests. Correctness is
+unaffected, because the resume ledger is the oldest event actually consumed, so
+nothing between windows is skipped.
+
+Both rails' positions ride in one opaque cursor, so neither is re-scrolled from
+the top.
 
 ### 7. Why not the `worker-service` indexer
 
@@ -120,7 +159,11 @@ later is a contained change.
 ## Consequences
 
 - History is correct immediately after a transaction, with no indexer lag.
-- Cost scales with the lookback window, bounded by node retention.
+- Cost scales with the ledger window read per page, bounded by the scan budget
+  and by node retention.
+- History is time-boxed by design: a page is the last few minutes of chain, and
+  "Load older" walks back. This is a consequence of the node offering no
+  reverse cursor, not a simplification.
 - Asset metadata for the two assets this wallet holds is resolved from the
   pinned per-network config (no network round-trip); other contracts are asked
   via read-only simulation, and a row whose asset cannot be resolved is **dropped

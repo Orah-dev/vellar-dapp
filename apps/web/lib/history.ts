@@ -2,9 +2,11 @@ import type { Network } from "@vellar/types";
 import type { HistoryAsset, HistoryPage } from "./history-types";
 import {
   contractIdOf,
+  buildClassicRail,
+  buildSorobanRail,
   decodePageCursor,
   encodePageCursor,
-  mergeHistoryPages,
+  isSACTransferEvent,
   withTransientRetry,
   type ClassicOp,
   type RawEvent,
@@ -32,8 +34,27 @@ import {
 // mock HistoryClient the way they mock balances.ts.
 
 const DEFAULT_PAGE_SIZE = 20;
-/** First-page getEvents lookback (~2 days of ledgers at ~5s). */
-const LOOKBACK_LEDGERS = 34_560;
+/**
+ * Ledger window per page (~2.5 minutes at ~5s ledgers). Windows are disjoint
+ * and march backwards; see the Rail 1 note for why a forward cursor cannot page
+ * a newest-first view.
+ */
+const WINDOW_LEDGERS = 32;
+/** Raw events requested per scan request (the node's practical ceiling). */
+const SCAN_PAGE_SIZE = 100;
+/**
+ * How many scan requests one window may cost. Bounded so a very busy ledger
+ * range cannot turn one page into an unbounded crawl.
+ *
+ * On a very busy range the budget can run out before the window's end is
+ * reached, which is a deliberate trade: the page then shows slightly older
+ * history rather than making N sequential requests. Correctness is unaffected,
+ * because the resume ledger is the oldest event ACTUALLY consumed, so nothing
+ * between the two windows is ever skipped.
+ */
+const MAX_SCAN_PAGES = 8;
+/** How many times one page may widen its window before settling. */
+const WINDOW_ATTEMPTS = 2;
 const ASSET_CACHE_LIMIT = 512;
 const SIMULATION_SOURCE = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
@@ -138,42 +159,110 @@ export function createHistoryClient(config: {
         allowHttp: config.rpcUrl.startsWith("http://"),
       });
 
-      // --- Rail 1: SAC transfer events (getEvents, cursor-paginated) --------
-      // No `order` is requested: it is not part of the SDK's GetEventsRequest
-      // and the public node was observed ignoring it. Paging is driven purely
-      // by the returned cursor (verified: successive pages are disjoint), and
-      // the newest-first guarantee the UI depends on comes from
-      // mergeHistoryPages sorting the merged stream, not from the RPC.
-      let eventPage: { events: RawEvent[]; cursor?: string };
-      const eventsCursor = pack?.events;
-      if (eventsCursor) {
-        const res = await withTransientRetry(() =>
-          rpcServer.getEvents({
-            cursor: eventsCursor,
-            limit: pageSize,
-            filters: [],
-          }),
-        );
-        eventPage = res as unknown as { events: RawEvent[]; cursor?: string };
-      } else {
-        // First page: bounded lookback window ending at the latest ledger,
-        // CLAMPED to the window the node actually retains. The public RPC's
-        // retention varies by which node its load balancer picks, and asking
-        // for a start ledger below oldestLedger is rejected outright with
-        // "startLedger must be within the ledger range" — the stale-view
-        // failure mode this view is required to survive.
+      // --- Rail 1: SAC transfer events (getEvents) ----------------------------
+      // WHY THIS IS SHAPED THE WAY IT IS — all three points below were
+      // verified live against soroban-testnet, not inferred from docs.
+      //
+      // 1. `order` is useless. It is not in the SDK's GetEventsRequest, and an
+      //    identical request carrying `order: "desc"` came back with the same
+      //    ascending page. There is no "latest N events" mode.
+      // 2. `getEvents({ startLedger })` returns the OLDEST events at or after
+      //    that ledger, ASCENDING, and its cursor walks FORWARD toward the
+      //    chain head. Verified: a request for startLedger = latest - 1000
+      //    came back entirely from ledger latest - 1000, not from the head.
+      //    So the old implementation — start the lookback window well in the
+      //    past and page forward — was showing a wallet the OLDEST transfers
+      //    of its window while labelling the panel newest-first.
+      // 3. Server-side topic filters are unreliable here: a filter that should
+      //    have matched returned 0 events on a window where the unfiltered
+      //    query returned 200 matching transfers, and the plain-string topic
+      //    form is rejected outright ("decoding ScValType: '-1229543503' is not
+      //    a valid ScValType enum value"). Events are discriminated
+      //    client-side, so a raw page is mostly NOT transfers — the same
+      //    range also carries `fee` and `approve` events.
+      //// Together these mean a FORWARD cursor cannot produce newest-first pages:
+// taking the tail of the stream discards everything before it, and
+      // taking the head shows the oldest history. So each page instead reads an
+      // explicit ledger WINDOW and renders it newest-first by reversing the
+      // ascending stream. "Load older" reads the window that ends at the ledger
+      // immediately BEFORE the oldest event the previous window actually
+      // consumed, so windows are disjoint, progress is strictly backwards, and
+      // nothing is re-read or skipped.
+      //
+      // The cursor therefore carries BOTH window bounds. Carrying only the
+      // start was a real defect: when the scan budget truncated a window, the
+      // next window — computed as [start-1, start+WINDOW-1] — overlapped the
+      // truncated remainder of the previous one and re-served ~100 rows.
+      //
+      // The first window ends at the chain head, so page one is the newest
+      // history there is. If it yields fewer transfers than a page holds it is
+      // widened backwards (bounded) — otherwise a quiet wallet would show "No
+      // transactions yet" while plainly having recent transfers, which is the
+      // failure mode issue #403 calls out.
+      let eventPage: { events: RawEvent[]; nextFrom: number; nextTo: number };
+      let oldestRetained = 0;
+      {
         const health = await withTransientRetry(() => rpcServer.getHealth());
         const latest = health.latestLedger;
-        const oldest = Math.min(health.oldestLedger ?? 1, latest);
-        const startLedger = Math.max(oldest, latest - LOOKBACK_LEDGERS);
-        const res = await withTransientRetry(() =>
-          rpcServer.getEvents({
-            startLedger,
-            limit: pageSize,
-            filters: [],
-          }),
-        );
-        eventPage = res as unknown as { events: RawEvent[]; cursor?: string };
+        oldestRetained = Math.min(health.oldestLedger ?? 1, latest);
+
+        // "<from>:<to>" — the window this page reads. Absent on the first page.
+        const carried = (pack?.events ?? "").split(":");
+        const carriedFrom = Number(carried[0]) || 0;
+        const carriedTo = Number(carried[1]) || 0;
+        let fromLedger = carriedFrom || Math.max(oldestRetained, latest - WINDOW_LEDGERS);
+        let windowEnd = carriedTo || latest;
+        let widened = false;
+        let events: RawEvent[] = [];
+        let oldestSeen: number | undefined;
+        let scannedCursor: string | undefined;
+
+        for (let attempt = 0; attempt < WINDOW_ATTEMPTS; attempt++) {
+          events = [];
+          oldestSeen = undefined;
+          scannedCursor = undefined;
+          // Read the window. The first request pins the ledger range; the rest
+          // continue it, because the node rejects a request carrying both
+          // ("ledger ranges and cursor cannot both be set").
+          for (let page = 0; page < MAX_SCAN_PAGES; page++) {
+            const res = await withTransientRetry(() =>
+              rpcServer.getEvents({
+                ...(page === 0
+                  ? { startLedger: fromLedger, endLedger: windowEnd }
+                  : { cursor: scannedCursor }),
+                limit: SCAN_PAGE_SIZE,
+                filters: [],
+              } as never),
+            );
+            const scanned = res as unknown as { events: RawEvent[]; cursor?: string };
+            events.push(...(scanned.events ?? []));
+            scannedCursor = scanned.cursor;
+            if (scanned.cursor === undefined) break; // reached the window's end
+          }
+          oldestSeen = events[0]?.ledger;
+
+          const transfers = events.filter((e) => isSACTransferEvent(e, decoder)).length;
+          if (transfers >= pageSize || widened || carriedFrom) break;
+          // Too quiet a window: widen it. Bounded so one page cannot crawl.
+          widened = true;
+          fromLedger = Math.max(oldestRetained, fromLedger - WINDOW_LEDGERS);
+          windowEnd = latest;
+          if (fromLedger <= oldestRetained) break;
+        }
+
+        // The next window ENDS at the ledger before the oldest event this
+        // window consumed — never at a computed offset from where it started,
+        // which is what made truncated windows overlap. An empty window steps
+        // back past itself so "Load older" still makes progress.
+        const nextTo =
+          oldestSeen !== undefined
+            ? oldestSeen - 1
+            : Math.max(oldestRetained, fromLedger - 1);
+        eventPage = {
+          events,
+          nextFrom: Math.max(oldestRetained, nextTo - WINDOW_LEDGERS + 1),
+          nextTo,
+        };
       }
 
       // --- Rail 2: classic operations (Horizon, cursor-paginated) -----------
@@ -210,22 +299,46 @@ export function createHistoryClient(config: {
         }),
       );
 
-      const { rows } = mergeHistoryPages({
+      const assetOf = (contractId: string) => resolved.get(contractId);
+
+      // Page each rail in ITS OWN stream order, then concatenate. See the long
+      // note above buildSorobanRail: merging both rails and slicing once by
+      // timestamp drops rows that neither rail's cursor accounts for, which is
+      // the security-audit L6/L6b defect class ("no row may be skipped and no
+      // row may be re-served"). pageSize is a per-rail budget, so a page holds
+      // up to pageSize rows per rail.
+      const sorobanRows = buildSorobanRail({
         accountId,
         events: eventPage.events,
-        ops: classicOps,
-        assetOf: (contractId) => resolved.get(contractId),
-        pageSize,
+        assetOf,
         decoder,
       });
+      const classic = buildClassicRail({ accountId, ops: classicOps, pageSize });
 
-      const lastOpToken = classicOps[classicOps.length - 1]?.paging_token;
-      const eventsExhausted = eventPage.cursor === undefined;
+      // Display order only; paging above already fixed both rails' positions.
+      const rows = [...sorobanRows, ...classic.rows].sort(
+        (a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp),
+      );
+
+      // --- resume points -----------------------------------------------------
+      // Soroban: the ledger immediately BEFORE the oldest event this window
+      // saw. Older pages resume there, so the windows march strictly backwards
+      // and no ledger is scanned twice.
+      const eventsCursorNext =
+        eventPage.nextTo > oldestRetained
+          ? `${eventPage.nextFrom}:${eventPage.nextTo}`
+          : undefined;
+      // Classic: the paging token of the oldest emitted operation, else the
+      // last operation Horizon returned (payments are dropped, so those are
+      // not interchangeable).
+      const opsCursorNext = classic.resume ?? classicOps.at(-1)?.paging_token;
+
+      const eventsExhausted = eventsCursorNext === undefined;
       // Continue while EITHER rail has more; the packed cursor carries both
       // positions so the next page resumes exactly here (security-audit L6:
       // no rail may be re-scrolled from the top).
       const nextCursor =
-        eventsExhausted && opsExhausted ? undefined : encodePageCursor(eventPage.cursor, lastOpToken);
+        eventsExhausted && opsExhausted ? undefined : encodePageCursor(eventsCursorNext, opsCursorNext);
 
       return { rows, nextCursor };
     },
