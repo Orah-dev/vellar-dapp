@@ -21,6 +21,18 @@ import { walletConfig } from "./config";
 
 export const HISTORY_PAGE_SIZE = 20;
 
+/**
+ * Rows the panel actually renders, across every page loaded so far.
+ *
+ * A page is a LEDGER WINDOW, not "the next 20 transactions" — see
+ * `lib/history.ts`. The node offers no reverse cursor, so a page has to read a
+ * whole time-boxed window, and on a busy window that is hundreds of rows.
+ * Rendering all of them would bury the dashboard, so the list is capped at the
+ * newest N. Rows beyond the cap are not lost: they were rendered in an earlier
+ * window, or `Load older` reaches further back. The cap only bounds one screen.
+ */
+export const HISTORY_DISPLAY_LIMIT = 50;
+
 let client: HistoryClient | undefined;
 
 function historyClient(): HistoryClient {
@@ -75,12 +87,16 @@ export function useActivity(accountId: string | undefined, network: Network | un
     staleTime: 30_000,
   });
 
-  const rows = query.data ? flattenPages(query.data.pages) : [];
+  const allRows = query.data ? flattenPages(query.data.pages) : [];
+  // Newest first, so the cap keeps the most recent activity on screen.
+  const rows = allRows.slice(0, HISTORY_DISPLAY_LIMIT);
 
   return {
     ...query,
     rows,
-    hasMore: query.hasNextPage,
+    // More than the cap means there is genuinely more to see, either further
+    // back in this window or in an older one.
+    hasMore: query.hasNextPage || allRows.length > rows.length,
     isLoadingMore: query.isFetchingNextPage,
     loadMore: () => query.fetchNextPage(),
   };
